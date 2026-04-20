@@ -234,6 +234,8 @@ def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
             target_file.seek(0)
 
             recvjst_raw = recvjst_h.iloc[0, 0]
+            if not has_log:
+                t1 = parse_datetime_or_duration(recvjst_raw)
 
             f2 = pd.read_excel(
                 io.BytesIO(target_file.read()),
@@ -254,7 +256,7 @@ def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
             df_raw = pd.read_excel(io.BytesIO(target_file.read()), sheet_name=sheet)
             target_file.seek(0)
 
-            if len(df_raw.columns) < 5:
+            if len(df_raw.columns) < 8:
                 raise ValueError(f"{target_filename} の列数が不足しています")
 
             amb_col = df_raw.columns[0]
