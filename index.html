@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>ファイル解析アプリ</title>
+        <link rel="stylesheet" href="style.css">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    </head>
+    <body>
+        <h1>ファイル解析アプリ</h1>
+        <p>ファイルを選択し，実行したい解析にチェックを入れてください．</p>
+        <form id="uploadForm">
+            <div class="controls">
+                <input type="file" id="fileInput" multiple>
+                <button type="submit">解析する</button>
+            </div>
+
+            <div id="analysis-options" class="controls">
+                <fieldset>
+                    <legend>解析メニュー</legend>
+                    <label>
+                        <input type="radio" name="analysis_type" value="show_files">
+                        ファイル内容を表示
+                    </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="mlx_evaluation">
+                        MLX評価
+                    </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="max_evaluation">
+                        MAX評価
+                    </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="mlx_reevaluation">
+                        MLX修正後評価
+                    </label>
+                </fieldset>
+            </div>
+
+            <div class="controls">
+                <label style="font-weight: bold;">
+                    <input type="checkbox" id="hasLogFile" checked> ログファイル(log.csv)を使用する
+                </label>
+            </div>
+
+            <div class="controls" id="interval-wrapper" style="display: none;">
+                <label for="intervalMin" style="font-weight: bold;">
+                    区切り分数：
+                </label>
+                <input
+                    type="number"
+                    id="intervalMin"
+                    min="1"
+                    step="1"
+                    value="5"
+                    style="width: 80px;"
+                >
+                <span>分ごとに区切る</span>
+            </div>
+
+            <div id="required-files-msg" style="margin-top: 10px; font-size: 0.9em; color: #666; min-height: 1.5em;">
+                必要ファイル：
+            </div>
+        </form>
+        <div id="result">
+            </div>
+
+        <script src="app.js" defer></script>
+    </body>
+</html>
