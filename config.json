@@ -26,6 +26,50 @@
     "measurement"
   ],
 
+  "mlx_columns": {
+    "normal_csv": {
+      "ambient": 0,
+      "object": 1,
+      "elapsed_ms": 4,
+      "offset_s": 5,
+      "recvjst": 7,
+      "min_columns": 8
+    },
+    "normal_xlsx": {
+      "ambient": 0,
+      "object": 1,
+      "elapsed_ms": 4,
+      "offset_col_letter": "F",
+      "recvjst_col_letter": "H",
+      "min_columns": 8
+    },
+    "corrected_csv": {
+      "ambient": 0,
+      "object": 8,
+      "elapsed_ms": 4,
+      "offset_s": 5,
+      "recvjst": 7,
+      "min_columns": 9
+    }
+  },
+
+  "max_columns": {
+  "ecg": {
+    "time": "Timestamp",
+    "hr": "HeartRate_BPM"
+  },
+  "ppg_eval": {
+    "time": "RecvJST",
+    "hr": "HR_BPM"
+  },
+  "ppg_raw_csv": {
+    "time": "RecvJST",
+    "ir": "IR_Value",
+    "red": "RED_Value",
+    "elapsed_ms": "SensorElapsed_ms"
+  }
+},
+
   "task_names": ["順応(５分)", "安静状態の測定(５分)","安静状態の測定(１０分)", "朗読(１分)", "準備(３０秒)", "4km/h（３分）",
                       "6km/h（３分）", "トレッドミルへ移動・準備(２分)",
                       "トレッドミル歩行 4km/h(５分)", "安静状態の測定(１５分)", "トレッドミル早歩き 6km/h(５分)",

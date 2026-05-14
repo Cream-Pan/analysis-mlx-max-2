@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const note = config.required_file_notes?.[type];
         if (note) {
-            message += `<b> , ${note}</b>`;
+            message += `<br><span style="color:#666;">補足：${note}</span>`;
         }
 
         requiredMsg.innerHTML = `必要なファイル： ${message}`;
