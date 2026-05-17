@@ -119,7 +119,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         requiredMsg.innerHTML = `必要なファイル： ${message}`;
     }
     document.querySelectorAll('input[name="analysis_type"]').forEach(radio => {
-        radio.addEventListener('change', updateRequiredFiles);
+        radio.addEventListener('change', () => {
+            const type = getSelectedAnalysisType();
+
+            if (type === 'ppg_to_hr') {
+                logCheckbox.checked = false;
+            }
+
+            updateRequiredFiles();
+            updateIntervalInputVisibility();
+        });
     });
     logCheckbox.addEventListener('change', () => {
         updateRequiredFiles();
@@ -159,6 +168,161 @@ document.addEventListener('DOMContentLoaded', async () => {
         }).catch(err => {
             console.error('PNG保存中にエラーが発生しました:', err);
             alert(`PNG保存エラーが発生しました: ${err.message}`);
+        });
+    }
+
+    function downloadCsvText(filename, csvText) {
+        const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        URL.revokeObjectURL(url);
+    }
+
+    function displayPpgToHrResult(result) {
+        const resultEl = document.createElement('div');
+        resultEl.className = 'result-item';
+
+        const uniqueId = `ppg-to-hr-${Date.now()}`;
+        const irCanvasId = `${uniqueId}-ir`;
+        const hrCanvasId = `${uniqueId}-hr`;
+
+        let html = `<h3>${result.title}</h3>`;
+
+        if (result.status === 'error') {
+            html += `<p style="color: red; font-weight: bold;">エラー: ${result.message}</p>`;
+            resultEl.innerHTML = html;
+            resultDiv.appendChild(resultEl);
+            return;
+        }
+
+        const fs = result.summary?.fs ?? 'N/A';
+        const overallCorr = result.summary?.overall_corr;
+        const corrText = (overallCorr === null || overallCorr === undefined)
+            ? 'N/A'
+            : Number(overallCorr).toFixed(4);
+
+        html += `
+            <table>
+                <thead><tr><th>項目</th><th>値</th></tr></thead>
+                <tbody>
+                    <tr><td>Fs</td><td>${fs} Hz</td></tr>
+                    <tr><td>全体相関係数 (IR vs RED)</td><td>${corrText}</td></tr>
+                </tbody>
+            </table>
+
+            <div class="chart-container" style="margin-top: 20px;">
+                <canvas id="${irCanvasId}"></canvas>
+            </div>
+
+            <div class="chart-container" style="margin-top: 20px;">
+                <canvas id="${hrCanvasId}"></canvas>
+            </div>
+
+            <div style="text-align: right; margin-top: 10px;">
+                <button class="download-csv-btn">CSVダウンロード</button>
+            </div>
+        `;
+
+        resultEl.innerHTML = html;
+        resultDiv.appendChild(resultEl);
+
+        const makeAnnotations = (segments) => {
+            const annotations = {};
+            (segments || []).forEach((seg, idx) => {
+                annotations[`line${idx}`] = {
+                    type: 'line',
+                    xMin: seg.start_time,
+                    xMax: seg.start_time,
+                    borderColor: 'gold',
+                    borderWidth: 1,
+                    borderDash: [6, 6]
+                };
+            });
+            return annotations;
+        };
+
+        const annotations = makeAnnotations(result.task_segments);
+
+        new Chart(document.getElementById(irCanvasId), {
+            type: 'line',
+            data: {
+                labels: result.plot_data.time,
+                datasets: [
+                    {
+                        label: 'Raw IR',
+                        data: result.plot_data.ir,
+                        pointRadius: 0,
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                parsing: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            displayFormats: { second: 'HH:mm:ss' }
+                        }
+                    },
+                    y: {
+                        title: { display: true, text: 'IR Value' }
+                    }
+                },
+                plugins: {
+                    legend: { display: true },
+                    annotation: { annotations }
+                }
+            }
+        });
+
+        new Chart(document.getElementById(hrCanvasId), {
+            type: 'line',
+            data: {
+                labels: result.plot_data.time,
+                datasets: [
+                    {
+                        label: 'Estimated HR',
+                        data: result.plot_data.hr,
+                        pointRadius: 0,
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                parsing: false,
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            displayFormats: { second: 'HH:mm:ss' }
+                        }
+                    },
+                    y: {
+                        suggestedMin: 40,
+                        suggestedMax: 180,
+                        title: { display: true, text: 'BPM' }
+                    }
+                },
+                plugins: {
+                    legend: { display: true },
+                    annotation: { annotations }
+                }
+            }
+        });
+
+        const btn = resultEl.querySelector('.download-csv-btn');
+        btn.addEventListener('click', () => {
+            downloadCsvText(result.download.filename, result.download.csv_text);
         });
     }
 
@@ -418,6 +582,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         break;
                     case 'max_evaluation':
                         displayMaxEvaluation(result);
+                        break;
+                    case 'ppg_to_hr':
+                        displayPpgToHrResult(result);
                         break;
                     case 'show_files':
                         displayFilePreview(result);
