@@ -10,7 +10,7 @@ from services.common import (
     perform_file_preview,
 )
 from services.mlx_service import process_mlx_common
-from services.max_service import perform_max_evaluation, process_ppg_to_hr
+from services.max_service import perform_max_evaluation, process_ppg_to_hr, perform_ppg_analysis
 
 app = Flask(__name__)
 CORS(app)
@@ -68,6 +68,9 @@ def upload_files():
 
         elif atype == 'max_evaluation':
             results.append(perform_max_evaluation(uploaded_files, has_log, interval_min))
+
+        elif atype == 'ppg_analysis':
+            results.append(perform_ppg_analysis(uploaded_files, has_log, interval_min))
 
         elif atype == 'ppg_to_hr':
             results.append(process_ppg_to_hr(uploaded_files, has_log, interval_min))

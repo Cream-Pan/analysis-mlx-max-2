@@ -326,6 +326,62 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    function displayPpgAnalysis(result) {
+        const resultEl = document.createElement('div');
+        resultEl.className = 'result-item';
+
+        let html = `<h3>${result.title}</h3>`;
+
+        if (result.status === 'error') {
+            html += `<p style="color: red; font-weight: bold;">エラー: ${result.message}</p>`;
+            resultEl.innerHTML = html;
+            resultDiv.appendChild(resultEl);
+            return;
+        }
+
+        result.data.forEach(task_result => {
+            html += `<h4>タスク: ${task_result.task}</h4>`;
+            html += '<table>';
+            html += '<thead>';
+            html += '<tr>';
+            html += '<th>比較</th>';
+            html += '<th>元データ</th>';
+            html += '<th>1分平均</th>';
+            html += '</tr>';
+            html += '</thead>';
+            html += '<tbody>';
+
+            task_result.comparisons.forEach(comp => {
+                let rawCell = '';
+                if (comp.error) {
+                    rawCell = `<span style="color: orange;">${comp.error} (N=${comp.raw_count})</span>`;
+                } else {
+                    rawCell = `MAE: ${formatMaxMetric(comp.raw_mae)}<br>RMSE: ${formatMaxMetric(comp.raw_rmse)}<br>(N=${comp.raw_count})`;
+                }
+
+                let resampledCell = '';
+                if (comp.error || comp.resampled_count === 0) {
+                    resampledCell = `<span style="color: orange;">${comp.error || 'データなし'} (N=${comp.resampled_count})</span>`;
+                } else {
+                    resampledCell = `MAE: ${formatMaxMetric(comp.resampled_mae)}<br>RMSE: ${formatMaxMetric(comp.resampled_rmse)}<br>(N=${comp.resampled_count})`;
+                }
+
+                html += `
+                    <tr>
+                        <td>${comp.device_name}</td>
+                        <td>${rawCell}</td>
+                        <td>${resampledCell}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+        });
+
+        resultEl.innerHTML = html;
+        resultDiv.appendChild(resultEl);
+    }
+
     // 汎用エラーを表示する関数
     function displayError(result) {
         const resultEl = document.createElement('div');
@@ -585,6 +641,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         break;
                     case 'ppg_to_hr':
                         displayPpgToHrResult(result);
+                        break;
+                    case 'ppg_analysis':
+                        displayPpgAnalysis(result);
                         break;
                     case 'show_files':
                         displayFilePreview(result);

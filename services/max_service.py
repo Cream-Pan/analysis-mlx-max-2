@@ -5,8 +5,19 @@ import numpy as np
 from scipy.signal import detrend, get_window, find_peaks
 from scipy.interpolate import interp1d
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-
+from itertools import combinations
 from services.common import config, load_log_tasks
+
+
+def _parse_datetime_series(series):
+    """CSV に ="..." 形式の時刻が混ざっていても datetime 化する。"""
+    cleaned = (
+        series.astype(str)
+        .str.strip()
+        .str.replace('="', '', regex=False)
+        .str.replace('"', '', regex=False)
+    )
+    return pd.to_datetime(cleaned, errors="coerce")
 
 
 def load_ecg_csv(f_obj):
@@ -28,7 +39,6 @@ def load_ecg_csv(f_obj):
     df = df.set_index(time_col).sort_index()
     df = df[~df.index.duplicated(keep='first')]
     return df[[hr_col]].rename(columns={hr_col: 'HR'})
-
 
 def load_ppg_csv(f_obj):
     eval_cfg = config["max_columns"]["ppg_eval"]
@@ -71,6 +81,26 @@ def load_ppg_csv(f_obj):
         elapsed_col: 'SensorElapsed_ms'
     })
 
+def load_ppg_hr_csv(f_obj):
+    hr_cfg = config["max_columns"]["ppg_eval"]
+    time_col = hr_cfg["time"]
+    hr_col = hr_cfg["hr"]
+
+    df = pd.read_csv(
+        io.BytesIO(f_obj.read()),
+        usecols=[time_col, hr_col]
+    )
+    f_obj.seek(0)
+
+    df[time_col] = _parse_datetime_series(df[time_col])
+    df[hr_col] = pd.to_numeric(df[hr_col], errors="coerce")
+
+    df = df.dropna(subset=[time_col, hr_col])
+    df = df.set_index(time_col).sort_index()
+    df = df[~df.index.duplicated(keep="first")]
+
+    return df[[hr_col]].rename(columns={hr_col: "HR"})
+
 def load_ppg_raw_csv(f_obj):
     raw_cfg = config["max_columns"]["ppg_raw_csv"]
 
@@ -95,15 +125,29 @@ def load_ppg_raw_csv(f_obj):
     df = pd.read_csv(io.BytesIO(f_obj.read()), usecols=usecols)
     f_obj.seek(0)
 
-    df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
+    df[time_col] = _parse_datetime_series(df[time_col])
     for col in [
         ir_col, red_col,
         accel_x_col, accel_y_col, accel_z_col,
         elapsed_col
     ]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.set_index(time_col).sort_index()
-    df = df[~df.index.duplicated(keep="first")]
+
+    # 時刻再構成に必要な SensorElapsed_ms だけ欠損を落とす。
+    # 元コードは行順のサンプル列をそのまま FFT に入れるため、ここで sort/drop duplicate はしない。
+    df = df.dropna(subset=[elapsed_col]).copy()
+    if df.empty:
+        raise ValueError("SensorElapsed_ms が有効な PPG 生データがありません")
+
+    # 元の受信時刻を保存し、最初に有効な RecvJST をアンカーとして取得時刻軸を再構成する。
+    df["RecvJST_Original"] = df[time_col]
+    anchor_idx = df[time_col].first_valid_index()
+    if anchor_idx is None:
+        raise ValueError("RecvJST が日時として解釈できません")
+
+    t1 = df.loc[anchor_idx, time_col]
+    s0 = df.loc[anchor_idx, elapsed_col]
+    df[time_col] = t1 + pd.to_timedelta(df[elapsed_col] - s0, unit="ms")
 
     return df.rename(columns={
         ir_col: "IR_Value",
@@ -139,6 +183,32 @@ def resolve_ppg_raw_file(uploaded_files):
             return filename
 
     raise ValueError("PPG 生データ CSV が見つかりません")
+
+def resolve_ppg_hr_files(uploaded_files):
+    hr_cfg = config["max_columns"]["ppg_eval"]
+    required_cols = {hr_cfg["time"], hr_cfg["hr"]}
+
+    matched = []
+
+    for filename, f in uploaded_files.items():
+        if not re.search(r'_hr\.csv$', filename, flags=re.IGNORECASE):
+            continue
+
+        try:
+            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
+            f.seek(0)
+        except Exception:
+            f.seek(0)
+            continue
+
+        cols = set(header_df.columns.tolist())
+        if required_cols.issubset(cols):
+            matched.append(filename)
+
+    if len(matched) < 2:
+        raise ValueError("PPG解析には *_HR.csv が 2 つ以上必要です")
+
+    return matched
 
 def estimate_hr_and_waveform(df, fs=100):
     """
@@ -202,12 +272,9 @@ def estimate_hr_and_waveform(df, fs=100):
         window_func = get_window('hann', len(segment_detrend))
         segment_windowed = segment_detrend * window_func
         
-        # FFT
-        # n=fs*60 と指定することで、擬似的に60秒分の分解能(1BPM刻み)を得る
-        pad_len = fs * 60
-
-        fft_spectrum = np.fft.rfft(segment_windowed, n=pad_len)
-        fft_freqs = np.fft.rfftfreq(pad_len, d=1/fs)
+        # FFT（元コードと完全一致: ゼロパディングしない）
+        fft_spectrum = np.fft.rfft(segment_windowed)
+        fft_freqs = np.fft.rfftfreq(len(segment_windowed), d=1/fs)
         fft_mag = np.abs(fft_spectrum)
         
         roi_idx = np.where((fft_freqs >= FREQ_MIN) & (fft_freqs <= FREQ_MAX))[0]
@@ -341,16 +408,16 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min):
         raw_filename = resolve_ppg_raw_file(uploaded_files)
         df = load_ppg_raw_csv(uploaded_files[raw_filename])
 
-        # アルゴリズム互換のため，index を列として戻す
-        df = df.reset_index().rename(columns={"index": "RecvJST"})
+        # 旧版 load_ppg_raw_csv との互換用。修正版では RecvJST は列として返る。
+        if "RecvJST" not in df.columns:
+            df = df.reset_index().rename(columns={"index": "RecvJST"})
 
-        # Fs 推定（添付ロジックそのまま）
+        # Fs 推定（元コードと同じく、先頭1000点の RecvJST 差分から推定）
         mean_dt = df["RecvJST"].head(1000).diff().dt.total_seconds().mean()
         estimated_fs = round(1 / mean_dt) if pd.notna(mean_dt) and mean_dt > 0 else 100
 
-        # 欠損補間（添付ロジックそのまま）
-        df["IR_Value"] = df["IR_Value"].ffill().bfill()
-        df["RED_Value"] = df["RED_Value"].ffill().bfill()
+        # 注意: HR推定前に IR/RED を ffill/bfill しない。
+        # 元コードは estimate_hr_and_waveform() 内で IR の NaN だけ平均値補完する。
 
         # 全体相関係数
         overall_corr = df["IR_Value"].corr(df["RED_Value"])
@@ -495,7 +562,6 @@ def evaluate_max_device(df_true, df_dev, start_t, end_t):
             "error": str(e)
         }
 
-
 def perform_max_evaluation(uploaded_files, has_log, interval_min):
     try:
         df_ecg = load_ecg_csv(uploaded_files['ecg.csv'])
@@ -546,4 +612,62 @@ def perform_max_evaluation(uploaded_files, has_log, interval_min):
             "analysis_type": "max_evaluation",
             "status": "error",
             "message": f"MAX解析エラー: {str(e)}"
+        }
+    
+    from itertools import combinations
+
+def perform_ppg_analysis(uploaded_files, has_log, interval_min):
+    try:
+        hr_filenames = resolve_ppg_hr_files(uploaded_files)
+
+        hr_dfs = {
+            name: load_ppg_hr_csv(uploaded_files[name])
+            for name in hr_filenames
+        }
+
+        start_limit = max(df.index.min() for df in hr_dfs.values())
+        end_limit = min(df.index.max() for df in hr_dfs.values())
+
+        if start_limit >= end_limit:
+            raise ValueError("比較可能な共通時刻範囲がありません")
+
+        tasks = load_log_tasks(
+            uploaded_files,
+            has_log,
+            interval_min,
+            start_limit,
+            end_limit,
+            start_limit.normalize()
+        )
+
+        pairs = list(combinations(hr_filenames, 2))
+        results = []
+
+        for task in tasks:
+            s_t = task["Start_Time"]
+            e_t = task["End_Time"]
+
+            comparisons = []
+            for a, b in pairs:
+                metrics = evaluate_max_device(hr_dfs[a], hr_dfs[b], s_t, e_t)
+                metrics["device_name"] = f"{a} vs {b}"
+                comparisons.append(metrics)
+
+            results.append({
+                "task": task["Task_Name"],
+                "comparisons": comparisons
+            })
+
+        return {
+            "analysis_type": "ppg_analysis",
+            "status": "success",
+            "data": results,
+            "title": "PPG解析 結果 (タスク別)"
+        }
+
+    except Exception as e:
+        return {
+            "analysis_type": "ppg_analysis",
+            "status": "error",
+            "message": f"PPG解析エラー: {str(e)}"
         }
