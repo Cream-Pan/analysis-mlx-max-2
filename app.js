@@ -6,9 +6,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const logCheckbox = document.getElementById('hasLogFile');
     const intervalWrapper = document.getElementById('interval-wrapper');
     const intervalInput = document.getElementById('intervalMin');
-    const submitButton = uploadForm.querySelector('button[type="submit"]');
     const offsetInput = document.getElementById('analysisStartOffsetSec');
     const offsetWrapper = document.getElementById('analysis-offset-wrapper');
+    const durationInput = document.getElementById('analysisDurationSec');
+    const durationWrapper = document.getElementById('analysis-duration-wrapper');
+    const submitButton = uploadForm.querySelector('button[type="submit"]');
 
     // logfile-wrapper が未設定でも最低限落ちないようにする
     const logWrapper =
@@ -135,7 +137,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function updateAnalysisOffsetVisibility() {
         const type = getSelectedAnalysisType();
-        setVisible(offsetWrapper, isPpgOnlyMode(type));
+        const visible = isPpgOnlyMode(type);
+
+        setVisible(offsetWrapper, visible);
+        setVisible(durationWrapper, visible);
     }
 
     function syncUiState() {
@@ -618,6 +623,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        const selectedType = getSelectedAnalysisType();
+        const hasLog = getEffectiveHasLog(selectedType);
+        const formData = new FormData();
+
         const analysisStartOffsetSec = parseFloat(offsetInput.value);
         if (isNaN(analysisStartOffsetSec) || analysisStartOffsetSec < 0) {
             alert('解析開始オフセットには 0 以上の数値を入力してください。');
@@ -625,9 +634,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const formData = new FormData();
-        const selectedType = getSelectedAnalysisType();
-        const hasLog = getEffectiveHasLog(selectedType);
+        let analysisDurationSec = 0;
+        if (isPpgOnlyMode(selectedType)) {
+            analysisDurationSec = parseFloat(durationInput.value);
+            if (isNaN(analysisDurationSec) || analysisDurationSec <= 0) {
+                alert('解析時間には 0 より大きい数値を入力してください。');
+                durationInput.focus();
+                return;
+            }
+        }
 
         let intervalMin = 0;
         if (!hasLog && !isPpgOnlyMode(selectedType)) {
@@ -640,6 +655,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         formData.append('analysis_start_offset_sec', analysisStartOffsetSec);
+        formData.append('analysis_duration_sec', analysisDurationSec);
         formData.append('has_log', hasLog);
         formData.append('interval_min', intervalMin);
 

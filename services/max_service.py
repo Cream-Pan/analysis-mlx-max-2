@@ -403,7 +403,7 @@ def estimate_hr_and_waveform(df, fs=100):
 
     return hr_output_full
 
-def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0):
+def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0, analysis_duration_sec=0):
     try:
         raw_filename = resolve_ppg_raw_file(uploaded_files)
         df = load_ppg_raw_csv(uploaded_files[raw_filename])
@@ -413,12 +413,24 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offs
             df = df.reset_index().rename(columns={"index": "RecvJST"})
 
         # 解析開始オフセット適用
-        if analysis_start_offset_sec > 0:
-            analysis_start_time = df["RecvJST"].min() + pd.Timedelta(seconds=analysis_start_offset_sec)
+        analysis_start_time = df["RecvJST"].min() + pd.Timedelta(seconds=analysis_start_offset_sec)
+
+        if analysis_duration_sec > 0:
+            analysis_end_time = analysis_start_time + pd.Timedelta(seconds=analysis_duration_sec)
+
+            if df["RecvJST"].max() < analysis_end_time:
+                available_sec = (df["RecvJST"].max() - analysis_start_time).total_seconds()
+                raise ValueError(
+                    f"指定した解析時間 {analysis_duration_sec:.1f} 秒を確保できません．"
+                    f"オフセット後に利用可能なのは {max(0.0, available_sec):.1f} 秒です．"
+                )
+
+            df = df[(df["RecvJST"] >= analysis_start_time) & (df["RecvJST"] < analysis_end_time)].copy()
+        else:
             df = df[df["RecvJST"] >= analysis_start_time].copy()
 
         if len(df) < 2:
-            raise ValueError("解析開始オフセット適用後のデータが不足しています")
+            raise ValueError("解析対象データが不足しています")
 
         # Fs 推定（元コードと同じく、先頭1000点の RecvJST 差分から推定）
         mean_dt = df["RecvJST"].head(1000).diff().dt.total_seconds().mean()
@@ -443,14 +455,23 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offs
         # 時間軸を index にして区間作成
         df_plot = df.set_index("RecvJST").sort_index()
 
-        task_segments = load_log_tasks(
-            uploaded_files,
-            has_log,
-            interval_min,
-            df_plot.index.min(),
-            df_plot.index.max(),
-            df_plot.index.min().normalize()
-        )
+        if has_log:
+            task_segments = load_log_tasks(
+                uploaded_files,
+                has_log,
+                interval_min,
+                df_plot.index.min(),
+                df_plot.index.max(),
+                df_plot.index.min().normalize()
+            )
+        else:
+            task_segments = [
+                {
+                    "Task_Name": "解析区間",
+                    "Start_Time": df_plot.index.min(),
+                    "End_Time": df_plot.index.max()
+                }
+            ]
 
         # ダウンロード用CSV
         output_df = df.copy()
@@ -622,7 +643,7 @@ def perform_max_evaluation(uploaded_files, has_log, interval_min):
             "message": f"MAX解析エラー: {str(e)}"
         }
     
-def perform_ppg_analysis(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0):
+def perform_ppg_analysis(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0, analysis_duration_sec=0):
     try:
         hr_filenames = resolve_ppg_hr_files(uploaded_files)
 
@@ -631,15 +652,14 @@ def perform_ppg_analysis(uploaded_files, has_log, interval_min, analysis_start_o
             for name in hr_filenames
         }
 
-        if analysis_start_offset_sec > 0:
-            trimmed = {}
-            for name, df in hr_dfs.items():
-                start_time = df.index.min() + pd.Timedelta(seconds=analysis_start_offset_sec)
-                df_trim = df[df.index >= start_time].copy()
-                if df_trim.empty:
-                    raise ValueError(f"{name} は解析開始オフセット適用後にデータがありません")
-                trimmed[name] = df_trim
-            hr_dfs = trimmed
+        trimmed = {}
+        for name, df in hr_dfs.items():
+            start_time = df.index.min() + pd.Timedelta(seconds=analysis_start_offset_sec)
+            df_trim = df[df.index >= start_time].copy()
+            if df_trim.empty:
+                raise ValueError(f"{name} は解析開始オフセット適用後にデータがありません")
+            trimmed[name] = df_trim
+        hr_dfs = trimmed
 
         start_limit = max(df.index.min() for df in hr_dfs.values())
         end_limit = min(df.index.max() for df in hr_dfs.values())
@@ -647,14 +667,39 @@ def perform_ppg_analysis(uploaded_files, has_log, interval_min, analysis_start_o
         if start_limit >= end_limit:
             raise ValueError("比較可能な共通時刻範囲がありません")
 
-        tasks = load_log_tasks(
-            uploaded_files,
-            has_log,
-            interval_min,
-            start_limit,
-            end_limit,
-            start_limit.normalize()
-        )
+        if analysis_duration_sec > 0:
+            analysis_end_time = start_limit + pd.Timedelta(seconds=analysis_duration_sec)
+
+            if end_limit < analysis_end_time:
+                available_sec = (end_limit - start_limit).total_seconds()
+                raise ValueError(
+                    f"指定した解析時間 {analysis_duration_sec:.1f} 秒を確保できません．"
+                    f"オフセット後の共通利用可能時間は {max(0.0, available_sec):.1f} 秒です．"
+                )
+
+            hr_dfs = {
+                name: df[(df.index >= start_limit) & (df.index < analysis_end_time)].copy()
+                for name, df in hr_dfs.items()
+            }
+            end_limit = analysis_end_time
+
+        if has_log:
+            tasks = load_log_tasks(
+                uploaded_files,
+                has_log,
+                interval_min,
+                start_limit,
+                end_limit,
+                start_limit.normalize()
+            )
+        else:
+            tasks = [
+                {
+                    "Task_Name": "解析区間",
+                    "Start_Time": start_limit,
+                    "End_Time": end_limit
+                }
+            ]
 
         pairs = list(combinations(hr_filenames, 2))
         results = []

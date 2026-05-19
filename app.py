@@ -29,6 +29,7 @@ def upload_files():
     has_log = request.form.get('has_log') == 'true'
     interval_min = int(request.form.get('interval_min', 5))
     analysis_start_offset_sec = float(request.form.get('analysis_start_offset_sec', 0))
+    analysis_duration_sec = float(request.form.get('analysis_duration_sec', 0))
 
     if not files:
         return jsonify([{
@@ -71,10 +72,26 @@ def upload_files():
             results.append(perform_max_evaluation(uploaded_files, has_log, interval_min))
 
         elif atype == 'ppg_analysis':
-            results.append(perform_ppg_analysis(uploaded_files, has_log, interval_min, analysis_start_offset_sec))
+            results.append(
+                perform_ppg_analysis(
+                    uploaded_files,
+                    has_log,
+                    interval_min,
+                    analysis_start_offset_sec,
+                    analysis_duration_sec
+                )
+            )
 
         elif atype == 'ppg_to_hr':
-            results.append(process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offset_sec))
+            results.append(
+                process_ppg_to_hr(
+                    uploaded_files,
+                    has_log,
+                    interval_min,
+                    analysis_start_offset_sec,
+                    analysis_duration_sec
+                )
+            )
 
         elif atype == 'show_files':
             results.append({
