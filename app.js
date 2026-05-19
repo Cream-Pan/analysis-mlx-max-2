@@ -1,5 +1,4 @@
 document.addEventListener('DOMContentLoaded', async () => {
-
     const uploadForm = document.getElementById('uploadForm');
     const fileInput = document.getElementById('fileInput');
     const resultDiv = document.getElementById('result');
@@ -8,8 +7,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const intervalWrapper = document.getElementById('interval-wrapper');
     const intervalInput = document.getElementById('intervalMin');
     const submitButton = uploadForm.querySelector('button[type="submit"]');
+    const offsetInput = document.getElementById('analysisStartOffsetSec');
+    const offsetWrapper = document.getElementById('analysis-offset-wrapper');
+
+    // logfile-wrapper が未設定でも最低限落ちないようにする
+    const logWrapper =
+        document.getElementById('logfile-wrapper') ||
+        logCheckbox?.closest('.controls');
 
     let config = null;
+
+    const PPG_ONLY_MODES = new Set(['ppg_to_hr', 'ppg_analysis']);
 
     // -----------------------------
     // 共通ヘルパー
@@ -19,8 +27,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function getSelectedAnalysisType() {
-        const selected = document.querySelector('input[name="analysis_type"]:checked');
-        return selected ? selected.value : null;
+        return document.querySelector('input[name="analysis_type"]:checked')?.value ?? null;
+    }
+
+    function isPpgOnlyMode(type = getSelectedAnalysisType()) {
+        return PPG_ONLY_MODES.has(type);
+    }
+
+    function setVisible(element, visible, display = 'flex') {
+        if (!element) return;
+        element.style.display = visible ? display : 'none';
+    }
+
+    function getEffectiveHasLog(type = getSelectedAnalysisType()) {
+        return !isPpgOnlyMode(type) && !!logCheckbox?.checked;
     }
 
     function getRequiredFiles(type, hasLog) {
@@ -43,8 +63,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return { ok: false, message: '実行したい解析メニューを選択してください。' };
         }
 
-        const hasLog = logCheckbox.checked;
-        const requiredFiles = getRequiredFiles(type, hasLog);
+        const requiredFiles = getRequiredFiles(type, getEffectiveHasLog(type));
         const selectedNames = getSelectedFileNames().map(normalizeFileName);
 
         const missingFiles = requiredFiles.filter(required =>
@@ -67,47 +86,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    try {
-        const response = await fetch('config.json');
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        config = await response.json();
-        // console.log('Config loaded:', config);
-
-        setSubmitEnabled(true);
-        updateRequiredFiles();
-        updateIntervalInputVisibility();
-    } catch (error) {
-        console.error('config.json の読み込みに失敗しました:', error);
-        requiredMsg.innerHTML = '<span style="color:red;">Configファイルの読み込みに失敗しました</span>';
-        setSubmitEnabled(false);
-    }
-
-    function updateIntervalInputVisibility() {
-    if (logCheckbox.checked) {
-        intervalWrapper.style.display = 'none';
-    } else {
-        intervalWrapper.style.display = 'flex';
-    }
-}
-
-    // メッセージを更新する関数
     function updateRequiredFiles() {
         if (!config) {
             requiredMsg.innerHTML = '<span style="color:red;">Configファイルが未読み込みです</span>';
             return;
         }
-        
+
         const type = getSelectedAnalysisType();
         if (!type) {
             requiredMsg.textContent = '必要なファイル：';
             return;
         }
 
-        const hasLog = logCheckbox.checked;
-        const requiredList = getRequiredFiles(type, hasLog);
+        const requiredList = getRequiredFiles(type, getEffectiveHasLog(type));
         const displayList = requiredList.map(name => `<b>${name}</b>`);
         let message = displayList.length > 0 ? displayList.join(' , ') : '任意';
 
@@ -118,24 +109,66 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         requiredMsg.innerHTML = `必要なファイル： ${message}`;
     }
-    document.querySelectorAll('input[name="analysis_type"]').forEach(radio => {
-        radio.addEventListener('change', () => {
-            const type = getSelectedAnalysisType();
 
-            if (type === 'ppg_to_hr') {
-                logCheckbox.checked = false;
-            }
+    function updateLogUiVisibility() {
+        const type = getSelectedAnalysisType();
+        const ppgOnly = isPpgOnlyMode(type);
 
-            updateRequiredFiles();
-            updateIntervalInputVisibility();
-        });
-    });
-    logCheckbox.addEventListener('change', () => {
-        updateRequiredFiles();
+        if (ppgOnly && logCheckbox) {
+            logCheckbox.checked = false;
+        }
+
+        setVisible(logWrapper, !ppgOnly);
+    }
+
+    function updateIntervalInputVisibility() {
+        const type = getSelectedAnalysisType();
+        const ppgOnly = isPpgOnlyMode(type);
+
+        if (ppgOnly) {
+            setVisible(intervalWrapper, false);
+            return;
+        }
+
+        setVisible(intervalWrapper, !logCheckbox.checked);
+    }
+
+    function updateAnalysisOffsetVisibility() {
+        const type = getSelectedAnalysisType();
+        setVisible(offsetWrapper, isPpgOnlyMode(type));
+    }
+
+    function syncUiState() {
+        updateLogUiVisibility();
         updateIntervalInputVisibility();
+        updateAnalysisOffsetVisibility();
+        updateRequiredFiles();
+    }
+
+    try {
+        const response = await fetch('config.json');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        config = await response.json();
+        setSubmitEnabled(true);
+        syncUiState();
+    } catch (error) {
+        console.error('config.json の読み込みに失敗しました:', error);
+        requiredMsg.innerHTML = '<span style="color:red;">Configファイルの読み込みに失敗しました</span>';
+        setSubmitEnabled(false);
+    }
+
+    document.querySelectorAll('input[name="analysis_type"]').forEach(radio => {
+        radio.addEventListener('change', syncUiState);
     });
 
-    // 画像保存
+    logCheckbox.addEventListener('change', syncUiState);
+
+    // -----------------------------
+    // 保存系
+    // -----------------------------
     window.saveResultsAsPng = saveResultsAsPng;
 
     function saveResultsAsPng(elementId) {
@@ -146,19 +179,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        html2canvas(element, { 
-            scale: 2, // 高解像度でキャプチャ
-            useCORS: true, // クロスオリジン画像を許可 (グラフ画像などに対応)
-            // キャプチャ対象がグラフ（Canvas）である場合、Canvasをそのままキャプチャするオプション
-            allowTaint: true, 
-            ignoreElements: (element) => {
-                // 保存ボタン自体は画像に含めない
-                return element.tagName === 'BUTTON' && element.textContent === 'PNG保存';
-            }
+        html2canvas(element, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            ignoreElements: (el) =>
+                el.tagName === 'BUTTON' && el.textContent === 'PNG保存'
         }).then(canvas => {
             const dataURL = canvas.toDataURL('image/png');
-            
-            // ダウンロード用のリンクを作成し、自動クリック
             const a = document.createElement('a');
             a.href = dataURL;
             a.download = `${elementId}_${new Date().toISOString().slice(0, 10)}.png`;
@@ -185,6 +213,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         URL.revokeObjectURL(url);
     }
 
+    // -----------------------------
+    // 表示系
+    // -----------------------------
     function displayPpgToHrResult(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
@@ -204,9 +235,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const fs = result.summary?.fs ?? 'N/A';
         const overallCorr = result.summary?.overall_corr;
-        const corrText = (overallCorr === null || overallCorr === undefined)
-            ? 'N/A'
-            : Number(overallCorr).toFixed(4);
+        const corrText =
+            overallCorr === null || overallCorr === undefined
+                ? 'N/A'
+                : Number(overallCorr).toFixed(4);
 
         html += `
             <table>
@@ -320,8 +352,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        const btn = resultEl.querySelector('.download-csv-btn');
-        btn.addEventListener('click', () => {
+        resultEl.querySelector('.download-csv-btn')?.addEventListener('click', () => {
             downloadCsvText(result.download.filename, result.download.csv_text);
         });
     }
@@ -339,32 +370,28 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        result.data.forEach(task_result => {
-            html += `<h4>タスク: ${task_result.task}</h4>`;
-            html += '<table>';
-            html += '<thead>';
-            html += '<tr>';
-            html += '<th>比較</th>';
-            html += '<th>元データ</th>';
-            html += '<th>1分平均</th>';
-            html += '</tr>';
-            html += '</thead>';
-            html += '<tbody>';
+        result.data.forEach(taskResult => {
+            html += `<h4>タスク: ${taskResult.task}</h4>`;
+            html += `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>比較</th>
+                            <th>元データ</th>
+                            <th>1分平均</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
 
-            task_result.comparisons.forEach(comp => {
-                let rawCell = '';
-                if (comp.error) {
-                    rawCell = `<span style="color: orange;">${comp.error} (N=${comp.raw_count})</span>`;
-                } else {
-                    rawCell = `MAE: ${formatMaxMetric(comp.raw_mae)}<br>RMSE: ${formatMaxMetric(comp.raw_rmse)}<br>(N=${comp.raw_count})`;
-                }
+            taskResult.comparisons.forEach(comp => {
+                const rawCell = comp.error
+                    ? `<span style="color: orange;">${comp.error} (N=${comp.raw_count})</span>`
+                    : `MAE: ${formatMaxMetric(comp.raw_mae)}<br>RMSE: ${formatMaxMetric(comp.raw_rmse)}<br>(N=${comp.raw_count})`;
 
-                let resampledCell = '';
-                if (comp.error || comp.resampled_count === 0) {
-                    resampledCell = `<span style="color: orange;">${comp.error || 'データなし'} (N=${comp.resampled_count})</span>`;
-                } else {
-                    resampledCell = `MAE: ${formatMaxMetric(comp.resampled_mae)}<br>RMSE: ${formatMaxMetric(comp.resampled_rmse)}<br>(N=${comp.resampled_count})`;
-                }
+                const resampledCell = (comp.error || comp.resampled_count === 0)
+                    ? `<span style="color: orange;">${comp.error || 'データなし'} (N=${comp.resampled_count})</span>`
+                    : `MAE: ${formatMaxMetric(comp.resampled_mae)}<br>RMSE: ${formatMaxMetric(comp.resampled_rmse)}<br>(N=${comp.resampled_count})`;
 
                 html += `
                     <tr>
@@ -375,14 +402,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 `;
             });
 
-            html += '</tbody></table>';
+            html += `</tbody></table>`;
         });
 
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
     }
 
-    // 汎用エラーを表示する関数
     function displayError(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
@@ -399,37 +425,33 @@ document.addEventListener('DOMContentLoaded', async () => {
         resultDiv.appendChild(resultEl);
     }
 
-    // MAE/RMSE の値に応じてスタイルを適用するヘルパー関数
     function formatMlxMetric(value) {
-        if (value === null) {
-            return 'N/A (データなし)';
-        }
+        if (value === null) return 'N/A (データなし)';
+
         const numericValue = parseFloat(value);
         const text = numericValue.toFixed(4);
+
         if (numericValue <= 0.3) {
             return `<span style="color: green; font-weight: bold;">${text}</span>`;
-        } else if (numericValue > 1.0) {
-            return `<span style="color: red; font-weight: bold;">${text}</span>`;
-        } else {
-            return text; 
         }
+        if (numericValue > 1.0) {
+            return `<span style="color: red; font-weight: bold;">${text}</span>`;
+        }
+        return text;
     }
 
     function formatMaxMetric(value) {
-        if (value === null) {
-            return 'N/A (データなし)';
-        }
+        if (value === null) return 'N/A (データなし)';
+
         const numericValue = parseFloat(value);
         const text = numericValue.toFixed(4);
 
         if (numericValue <= 5.0) {
             return `<span style="color: green; font-weight: bold;">${text}</span>`;
-        } else {
-            return `<span style="color: red; font-weight: bold;">${text}</span>`;
         }
+        return `<span style="color: red; font-weight: bold;">${text}</span>`;
     }
 
-    // ファイルプレビューの結果を表示する関数
     function displayFilePreview(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
@@ -438,19 +460,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (result.status === 'error' || !result.data) {
             html += `<p style="color: red; font-weight: bold;">エラー: ${result.message || 'データを表示できません'}</p>`;
         } else {
-            result.data.forEach(file => { // result.data はファイルのリスト
+            result.data.forEach(file => {
                 html += `<h4>${file.filename}</h4>`;
-                
+
                 if (file.sheets && Array.isArray(file.sheets)) {
                     file.sheets.forEach(sheet => {
                         if (sheet.sheet_name) {
-                            const safeSheetName = String(sheet.sheet_name).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                            const safeSheetName = String(sheet.sheet_name)
+                                .replace(/</g, '&lt;')
+                                .replace(/>/g, '&gt;');
                             html += `<h5 style="margin:0.5em 0 0.2em 1.5em;">シート: ${safeSheetName}</h5>`;
                         }
+
                         html += '<ul>';
                         if (sheet.data && Array.isArray(sheet.data)) {
                             sheet.data.forEach(item => {
-                                const safeItem = String(item).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                const safeItem = String(item)
+                                    .replace(/</g, '&lt;')
+                                    .replace(/>/g, '&gt;');
                                 html += `<li>${safeItem}</li>`;
                             });
                         } else {
@@ -461,11 +488,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         }
+
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
     }
 
-    //MLX評価の結果を表示する関数
     function displayMlxEvaluation(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
@@ -476,102 +503,110 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (result.status === 'error') {
             html += `<p style="color: red; font-weight: bold;">エラー: ${result.message}</p>`;
         } else {
-            result.data.forEach(task_result => {
-                html += `<h4>タスク: ${task_result.task}</h4>`;
-                html += '<table>';
-                html += '<thead><tr><th>指標</th><th>値</th></tr></thead>';
-                html += '<tbody>';
-                html += `<tr><td>有効データペア数</td><td>${task_result.count}</td></tr>`;
-                const mae_str = formatMlxMetric(task_result.mae);
-                const rmse_str = formatMlxMetric(task_result.rmse);
-                html += `<tr><td>MAE (平均絶対誤差)</td><td>${mae_str}</td></tr>`;
-                html += `<tr><td>RMSE (二乗平均平方根誤差)</td><td>${rmse_str}</td></tr>`;
-                html += `<tr><td>BodyTemp 平均</td><td>${task_result.mean_body_temp?.toFixed(3) ?? 'N/A'}</td></tr>`;
-                html += `<tr><td>Object_C 平均</td><td>${task_result.mean_object_c?.toFixed(3) ?? 'N/A'}</td></tr>`;
-                html += `<tr><td>Ambient_C 平均</td><td>${task_result.mean_ambient_c?.toFixed(3) ?? 'N/A'}</td></tr>`;
-                html += '</tbody></table>';
+            result.data.forEach(taskResult => {
+                html += `<h4>タスク: ${taskResult.task}</h4>`;
+                html += `
+                    <table>
+                        <thead><tr><th>指標</th><th>値</th></tr></thead>
+                        <tbody>
+                            <tr><td>有効データペア数</td><td>${taskResult.count}</td></tr>
+                            <tr><td>MAE (平均絶対誤差)</td><td>${formatMlxMetric(taskResult.mae)}</td></tr>
+                            <tr><td>RMSE (二乗平均平方根誤差)</td><td>${formatMlxMetric(taskResult.rmse)}</td></tr>
+                            <tr><td>BodyTemp 平均</td><td>${taskResult.mean_body_temp?.toFixed(3) ?? 'N/A'}</td></tr>
+                            <tr><td>Object_C 平均</td><td>${taskResult.mean_object_c?.toFixed(3) ?? 'N/A'}</td></tr>
+                            <tr><td>Ambient_C 平均</td><td>${taskResult.mean_ambient_c?.toFixed(3) ?? 'N/A'}</td></tr>
+                        </tbody>
+                    </table>
+                `;
             });
-            html += `<div style="text-align: right; margin-top: 10px;">
+
+            html += `
+                <div style="text-align: right; margin-top: 10px;">
                     <button onclick="saveResultsAsPng('${uniqueId}')">PNG保存</button>
-                 </div>`;
+                </div>
+            `;
         }
 
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
     }
 
-    //MAX評価の結果を表示する関数
     function displayMaxEvaluation(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
         const uniqueId = `result-${result.analysis_type}-${Date.now()}`;
         resultEl.id = uniqueId;
+
         let html = `<h3>${result.title}</h3>`;
         if (result.status === 'error') {
             html += `<p style="color: red; font-weight: bold;">エラー: ${result.message}</p>`;
-        } else{
-            result.data.forEach(task_result => {
-                html += `<h4>タスク: ${task_result.task}</h4>`;
-                const eval_vs_ecg = task_result.eval_1;
-                const eval_vs_fin = task_result.eval_2;
-                html += '<table>';
-                html += '<thead>';
-                html += '<tr>';
-                html += '<th></th>';
-                html += `<th>${eval_vs_ecg.device_name}</th>`;
-                html += `<th>${eval_vs_fin.device_name}</th>`;
-                html += '</tr>';
-                html += '</thead>';
-                html += '<tbody>';
-                // --- 行1: 元データ ---
-                html += '<tr>';
-                html += '<td>元データ</td>';
-                // vsECG (元データ)
-                if (eval_vs_ecg.error) {
-                    html += `<td style="color: orange;">${eval_vs_ecg.error} (N=${eval_vs_ecg.raw_count})</td>`;
-                } else {
-                    html += `<td>MAE: ${formatMaxMetric(eval_vs_ecg.raw_mae)}<br>RMSE: ${formatMaxMetric(eval_vs_ecg.raw_rmse)}<br>(N=${eval_vs_ecg.raw_count})</td>`;
-                }
-                // vsPPG_fin (元データ)
-                if (eval_vs_fin.error) {
-                    html += `<td style="color: orange;">${eval_vs_fin.error} (N=${eval_vs_fin.raw_count})</td>`;
-                } else {
-                    html += `<td>MAE: ${formatMaxMetric(eval_vs_fin.raw_mae)}<br>RMSE: ${formatMaxMetric(eval_vs_fin.raw_rmse)}<br>(N=${eval_vs_fin.raw_count})</td>`;
-                }
-                html += '</tr>';
-                // --- 行2: 1分平均 ---
-                html += '<tr>';
-                html += '<td>1分平均</td>';
-                // vsECG (1分平均)
-                if (eval_vs_ecg.error || eval_vs_ecg.resampled_count === 0) {
-                    html += `<td style="color: orange;">${eval_vs_ecg.error || 'データなし'} (N=${eval_vs_ecg.resampled_count})</td>`;
-                } else {
-                    html += `<td>MAE: ${formatMaxMetric(eval_vs_ecg.resampled_mae)}<br>RMSE: ${formatMaxMetric(eval_vs_ecg.resampled_rmse)}<br>(N=${eval_vs_ecg.resampled_count})</td>`;
-                }
-                // vsPPG_fin (1分平均)
-                // resampled_count が 0 の場合もエラーとして扱う
-                if (eval_vs_fin.error || eval_vs_fin.resampled_count === 0) {
-                    html += `<td style="color: orange;">${eval_vs_fin.error || 'データなし'} (N=${eval_vs_fin.resampled_count})</td>`;
-                } else {
-                    html += `<td>MAE: ${formatMaxMetric(eval_vs_fin.resampled_mae)}<br>RMSE: ${formatMaxMetric(eval_vs_fin.resampled_rmse)}<br>(N=${eval_vs_fin.resampled_count})</td>`;
-                }
-                html += '</tr>';
+        } else {
+            result.data.forEach(taskResult => {
+                html += `<h4>タスク: ${taskResult.task}</h4>`;
+                const evalVsEcg = taskResult.eval_1;
+                const evalVsFin = taskResult.eval_2;
 
-                html += '</tbody></table>';
+                html += `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>${evalVsEcg.device_name}</th>
+                                <th>${evalVsFin.device_name}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+
+                html += `
+                    <tr>
+                        <td>元データ</td>
+                        <td>${
+                            evalVsEcg.error
+                                ? `<span style="color: orange;">${evalVsEcg.error} (N=${evalVsEcg.raw_count})</span>`
+                                : `MAE: ${formatMaxMetric(evalVsEcg.raw_mae)}<br>RMSE: ${formatMaxMetric(evalVsEcg.raw_rmse)}<br>(N=${evalVsEcg.raw_count})`
+                        }</td>
+                        <td>${
+                            evalVsFin.error
+                                ? `<span style="color: orange;">${evalVsFin.error} (N=${evalVsFin.raw_count})</span>`
+                                : `MAE: ${formatMaxMetric(evalVsFin.raw_mae)}<br>RMSE: ${formatMaxMetric(evalVsFin.raw_rmse)}<br>(N=${evalVsFin.raw_count})`
+                        }</td>
+                    </tr>
+                `;
+
+                html += `
+                    <tr>
+                        <td>1分平均</td>
+                        <td>${
+                            evalVsEcg.error || evalVsEcg.resampled_count === 0
+                                ? `<span style="color: orange;">${evalVsEcg.error || 'データなし'} (N=${evalVsEcg.resampled_count})</span>`
+                                : `MAE: ${formatMaxMetric(evalVsEcg.resampled_mae)}<br>RMSE: ${formatMaxMetric(evalVsEcg.resampled_rmse)}<br>(N=${evalVsEcg.resampled_count})`
+                        }</td>
+                        <td>${
+                            evalVsFin.error || evalVsFin.resampled_count === 0
+                                ? `<span style="color: orange;">${evalVsFin.error || 'データなし'} (N=${evalVsFin.resampled_count})</span>`
+                                : `MAE: ${formatMaxMetric(evalVsFin.resampled_mae)}<br>RMSE: ${formatMaxMetric(evalVsFin.resampled_rmse)}<br>(N=${evalVsFin.resampled_count})`
+                        }</td>
+                    </tr>
+                `;
+
+                html += `</tbody></table>`;
             });
-            html += `<div style="text-align: right; margin-top: 10px;">
-                        <button onclick="saveResultsAsPng('${uniqueId}')">PNG保存</button>
-                     </div>`;
+
+            html += `
+                <div style="text-align: right; margin-top: 10px;">
+                    <button onclick="saveResultsAsPng('${uniqueId}')">PNG保存</button>
+                </div>
+            `;
         }
-        
+
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
     }
 
-    // --- メインの submit イベントリスナー ---
     uploadForm.addEventListener('submit', async function(event) {
         event.preventDefault();
-        
+
         if (!config) {
             alert('Configファイルが読み込まれていないため，送信できません．');
             return;
@@ -583,11 +618,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const formData = new FormData();
-        const hasLog = logCheckbox.checked;
-        let intervalMin = 0;
+        const analysisStartOffsetSec = parseFloat(offsetInput.value);
+        if (isNaN(analysisStartOffsetSec) || analysisStartOffsetSec < 0) {
+            alert('解析開始オフセットには 0 以上の数値を入力してください。');
+            offsetInput.focus();
+            return;
+        }
 
-        if (!hasLog) {
+        const formData = new FormData();
+        const selectedType = getSelectedAnalysisType();
+        const hasLog = getEffectiveHasLog(selectedType);
+
+        let intervalMin = 0;
+        if (!hasLog && !isPpgOnlyMode(selectedType)) {
             intervalMin = parseInt(intervalInput.value, 10);
             if (isNaN(intervalMin) || intervalMin <= 0) {
                 alert('区切り分数には 1 以上の整数を入力してください。');
@@ -596,6 +639,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
+        formData.append('analysis_start_offset_sec', analysisStartOffsetSec);
         formData.append('has_log', hasLog);
         formData.append('interval_min', intervalMin);
 
@@ -603,7 +647,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             formData.append('files', file);
         }
 
-        const selectedType = getSelectedAnalysisType();
         formData.append('analysis_types[]', selectedType);
 
         resultDiv.innerHTML = '解析中...';
@@ -627,11 +670,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     : `HTTP ${response.status}`;
                 throw new Error(serverMessage);
             }
+
             resultDiv.innerHTML = '';
 
-            // 結果の配列をループ処理
             results.forEach(result => {
-                // analysis_type に応じて適切な表示関数を呼び出す
                 switch (result.analysis_type) {
                     case 'mlx_evaluation':
                         displayMlxEvaluation(result);
@@ -658,7 +700,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
         } catch (error) {
-            resultDiv.innerHTML = ''; // 「解析中...」を消す
+            resultDiv.innerHTML = '';
             displayError({ message: `サーバーとの通信に失敗しました: ${error.message}` });
         }
     });

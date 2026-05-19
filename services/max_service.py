@@ -403,7 +403,7 @@ def estimate_hr_and_waveform(df, fs=100):
 
     return hr_output_full
 
-def process_ppg_to_hr(uploaded_files, has_log, interval_min):
+def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0):
     try:
         raw_filename = resolve_ppg_raw_file(uploaded_files)
         df = load_ppg_raw_csv(uploaded_files[raw_filename])
@@ -411,6 +411,14 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min):
         # 旧版 load_ppg_raw_csv との互換用。修正版では RecvJST は列として返る。
         if "RecvJST" not in df.columns:
             df = df.reset_index().rename(columns={"index": "RecvJST"})
+
+        # 解析開始オフセット適用
+        if analysis_start_offset_sec > 0:
+            analysis_start_time = df["RecvJST"].min() + pd.Timedelta(seconds=analysis_start_offset_sec)
+            df = df[df["RecvJST"] >= analysis_start_time].copy()
+
+        if len(df) < 2:
+            raise ValueError("解析開始オフセット適用後のデータが不足しています")
 
         # Fs 推定（元コードと同じく、先頭1000点の RecvJST 差分から推定）
         mean_dt = df["RecvJST"].head(1000).diff().dt.total_seconds().mean()
@@ -614,9 +622,7 @@ def perform_max_evaluation(uploaded_files, has_log, interval_min):
             "message": f"MAX解析エラー: {str(e)}"
         }
     
-    from itertools import combinations
-
-def perform_ppg_analysis(uploaded_files, has_log, interval_min):
+def perform_ppg_analysis(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0):
     try:
         hr_filenames = resolve_ppg_hr_files(uploaded_files)
 
@@ -624,6 +630,16 @@ def perform_ppg_analysis(uploaded_files, has_log, interval_min):
             name: load_ppg_hr_csv(uploaded_files[name])
             for name in hr_filenames
         }
+
+        if analysis_start_offset_sec > 0:
+            trimmed = {}
+            for name, df in hr_dfs.items():
+                start_time = df.index.min() + pd.Timedelta(seconds=analysis_start_offset_sec)
+                df_trim = df[df.index >= start_time].copy()
+                if df_trim.empty:
+                    raise ValueError(f"{name} は解析開始オフセット適用後にデータがありません")
+                trimmed[name] = df_trim
+            hr_dfs = trimmed
 
         start_limit = max(df.index.min() for df in hr_dfs.values())
         end_limit = min(df.index.max() for df in hr_dfs.values())
