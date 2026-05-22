@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let config = null;
 
-    const PPG_ONLY_MODES = new Set(['ppg_to_hr', 'ppg_analysis']);
+    const PPG_ONLY_MODES = new Set(['ppg_to_hr', 'ppg_analysis', 'ppg_hr_analysis']);
 
     // -----------------------------
     // 共通ヘルパー
@@ -121,6 +121,71 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         setVisible(logWrapper, !ppgOnly);
+    }
+
+    function displayPpgHrAnalysis(result) {
+        const resultEl = document.createElement('div');
+        resultEl.className = 'result-item';
+
+        let html = `<h3>${result.title || 'PPG脈波解析結果'}</h3>`;
+
+        if (result.status === 'error') {
+            html += `<p style="color: red; font-weight: bold;">エラー: ${result.message}</p>`;
+            resultEl.innerHTML = html;
+            resultDiv.appendChild(resultEl);
+            return;
+        }
+
+        if (!result.data || result.data.length === 0) {
+            html += `<p style="color: orange; font-weight: bold;">解析結果がありません</p>`;
+            resultEl.innerHTML = html;
+            resultDiv.appendChild(resultEl);
+            return;
+        }
+
+        html += `
+            <table>
+                <thead>
+                    <tr>
+                        <th>ファイル</th>
+                        <th>解析開始</th>
+                        <th>解析終了</th>
+                        <th>有効拍数</th>
+                        <th>LF</th>
+                        <th>HF</th>
+                        <th>LF/HF</th>
+                        <th>NN50</th>
+                        <th>PNN50</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        result.data.forEach(row => {
+            const lf = row.lf_power == null ? 'N/A' : Number(row.lf_power).toFixed(4);
+            const hf = row.hf_power == null ? 'N/A' : Number(row.hf_power).toFixed(4);
+            const lfHf = row.lf_hf == null ? 'N/A' : Number(row.lf_hf).toFixed(4);
+            const pnn50 = row.pnn50 == null ? 'N/A' : `${Number(row.pnn50).toFixed(2)} %`;
+
+            html += `
+                <tr>
+                    <td>${row.filename}</td>
+                    <td>${row.start_time}</td>
+                    <td>${row.end_time}</td>
+                    <td>${row.nn_count}</td>
+                    <td>${lf}</td>
+                    <td>${hf}</td>
+                    <td>${lfHf}</td>
+                    <td>${row.nn50}</td>
+                    <td>${pnn50}</td>
+                </tr>
+            `;
+        });
+
+        html += `</tbody></table>`;
+
+        resultEl.innerHTML = html;
+        resultDiv.appendChild(resultEl);
     }
 
     function updateIntervalInputVisibility() {
@@ -702,6 +767,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         break;
                     case 'ppg_analysis':
                         displayPpgAnalysis(result);
+                        break;
+                    case 'ppg_hr_analysis':
+                        displayPpgHrAnalysis(result);
                         break;
                     case 'show_files':
                         displayFilePreview(result);
