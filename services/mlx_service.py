@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-from services.common import config, load_body_temp, load_log_tasks, parse_datetime_or_duration, get_log_start_time
+from services.common import config, load_body_temp, load_log_tasks, parse_datetime_or_duration
 
 
 def get_mlx_layout(mode, file_kind):
@@ -42,7 +42,7 @@ def resolve_mlx_evaluation_file(uploaded_files):
     raise ValueError("mlx_evaluation 用の MLX 生データファイルが見つかりません")
 
 
-def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
+def load_mlx_device_data(uploaded_files, mode):
     """MLX デバイスデータを読み込んで時系列 DataFrame に整形"""
     if mode == "normal":
         target_filename = resolve_mlx_evaluation_file(uploaded_files)
@@ -74,26 +74,7 @@ def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
             target_file.seek(0)
 
             recvjst_raw = recvjst_h.iloc[0, 0]
-            if not has_log:
-                t1 = parse_datetime_or_duration(recvjst_raw)
-                offset_td = pd.to_timedelta("0s")
-
-            else:
-                f2 = pd.read_excel(
-                    io.BytesIO(target_file.read()),
-                    sheet_name=sheet,
-                    header=None,
-                    skiprows=1,
-                    nrows=1,
-                    usecols=layout["offset_col_letter"]
-                )
-                target_file.seek(0)
-
-                raw_offset = f2.iloc[0, 0]
-                try:
-                    offset_td = pd.to_timedelta(float(raw_offset), unit="s")
-                except Exception:
-                    offset_td = pd.to_timedelta("0s")
+            t1 = parse_datetime_or_duration(recvjst_raw)
 
             df_raw = pd.read_excel(io.BytesIO(target_file.read()), sheet_name=sheet)
             target_file.seek(0)
@@ -128,16 +109,8 @@ def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
             obj_col = df_raw.columns[layout["object"]]
             elap_col = df_raw.columns[layout["elapsed_ms"]]
 
-            if not has_log:
-                recvjst_raw = df_raw.iloc[0, layout["recvjst"]]
-                t1 = parse_datetime_or_duration(recvjst_raw)
-                offset_td = pd.to_timedelta("0s")
-
-            else:
-                raw_offset = df_raw.iloc[0, layout["offset_s"]]
-                offset_td = pd.to_timedelta(raw_offset, unit="s", errors="coerce")
-                if pd.isna(offset_td):
-                    offset_td = pd.to_timedelta("0s")
+            recvjst_raw = df_raw.iloc[0, layout["recvjst"]]
+            t1 = parse_datetime_or_duration(recvjst_raw)
 
             title = f"MLX評価 結果 ({target_filename})"
 
@@ -165,32 +138,17 @@ def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
         elap_col = df_raw.columns[layout["elapsed_ms"]]
         obj_col = df_raw.columns[layout["object"]]
 
-        if not has_log:
-            recvjst_raw = df_raw.iloc[0, layout["recvjst"]]
-            t1 = parse_datetime_or_duration(recvjst_raw)
-            offset_td = pd.to_timedelta("0s")
-
-        else:
-            raw_offset = df_raw.iloc[0, layout["offset_s"]]
-            offset_td = pd.to_timedelta(raw_offset, unit="s", errors="coerce")
-            if pd.isna(offset_td):
-                offset_td = pd.to_timedelta("0s")
+        recvjst_raw = df_raw.iloc[0, layout["recvjst"]]
+        t1 = parse_datetime_or_duration(recvjst_raw)
 
         title = "MLX修正後評価 結果 (mlx_re.csv)"
-
-    if t1 is None:
-        raise ValueError("MLX の基準時刻 t1 を決定できませんでした")
-
-    time_1 = t1 + offset_td
 
     sensor_td = pd.to_timedelta(df_raw[elap_col], unit="ms", errors="coerce")
     if sensor_td.isna().all():
         raise ValueError("経過時間列の変換に失敗しました")
 
-    diff_td = sensor_td.diff().fillna(pd.Timedelta(seconds=0))
-
     df_dev = pd.DataFrame({
-        "Timestamp": time_1 + diff_td.cumsum(),
+        "Timestamp": t1 + (sensor_td - sensor_td.iloc[0]),
         "Ambient_C": pd.to_numeric(df_raw[amb_col], errors="coerce"),
         "Object_C": pd.to_numeric(df_raw[obj_col], errors="coerce")
     }).dropna(subset=["Timestamp", "Ambient_C", "Object_C"]).set_index("Timestamp").sort_index()
@@ -211,10 +169,10 @@ def process_mlx_common(uploaded_files, mode, has_log, interval_min):
         base_day = df_true.index.min().normalize()
 
         # 2. 開始時刻
-        sensor_start = get_log_start_time(uploaded_files)
-
-        # 3. デバイスデータ
-        df_dev, title = load_mlx_device_data(uploaded_files, mode, has_log, sensor_start)
+        df_dev, title = load_mlx_device_data(
+            uploaded_files,
+            mode
+        )
 
         # 4. タスク分割
         tasks = load_log_tasks(
