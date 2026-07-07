@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-from services.common import config, load_body_temp, load_log_tasks, parse_datetime_or_duration
+from services.common import config, load_body_temp, load_log_tasks, parse_datetime_or_duration, get_log_start_time
 
 
 def get_mlx_layout(mode, file_kind):
@@ -202,7 +202,6 @@ def load_mlx_device_data(uploaded_files, mode, has_log, t1=None):
 
 
 def process_mlx_common(uploaded_files, mode, has_log, interval_min):
-    """MLX評価の共通処理（通常版と修正版）"""
     try:
         # 1. 真値(体温)
         df_true = load_body_temp(uploaded_files["body_temperature.csv"])
@@ -212,26 +211,10 @@ def process_mlx_common(uploaded_files, mode, has_log, interval_min):
         base_day = df_true.index.min().normalize()
 
         # 2. 開始時刻
-        if has_log:
-            log_df = pd.read_csv(io.BytesIO(uploaded_files["log.csv"].read()))
-            uploaded_files["log.csv"].seek(0)
-
-            if "Task_Name" not in log_df.columns or "Timestamp" not in log_df.columns:
-                raise ValueError("log.csv に必要な列(Task_Name, Timestamp)がありません")
-
-            sensor_start = log_df[
-                log_df["Task_Name"].astype(str).str.replace('"', '', regex=False) == "BLE_START_TIME (Main)"
-            ]
-            if sensor_start.empty:
-                raise ValueError("BLE_START_TIME (Main) が見つかりません")
-
-            sensor_start_raw = sensor_start["Timestamp"].iloc[0]
-            t1 = parse_datetime_or_duration(sensor_start_raw, base_day)
-        else:
-            t1 = None
+        sensor_start = get_log_start_time(uploaded_files)
 
         # 3. デバイスデータ
-        df_dev, title = load_mlx_device_data(uploaded_files, mode, has_log, t1)
+        df_dev, title = load_mlx_device_data(uploaded_files, mode, has_log, sensor_start)
 
         # 4. タスク分割
         tasks = load_log_tasks(

@@ -58,6 +58,33 @@ def resolve_log_file(uploaded_files):
         "ログファイル(*_log.csv)が見つかりません"
     )
 
+def get_log_start_time(uploaded_files):
+    log_filename = resolve_log_file(uploaded_files)
+
+    df_log = pd.read_csv(
+        io.BytesIO(uploaded_files[log_filename].read())
+    )
+    uploaded_files[log_filename].seek(0)
+
+    if "Task_Name" not in df_log.columns or "Timestamp" not in df_log.columns:
+        raise ValueError(
+            "ログファイルに必要な列(Task_Name, Timestamp)がありません"
+        )
+
+    start_rows = df_log[
+        df_log["Task_Name"].astype(str).str.replace('"', '', regex=False)
+        == "BLE_START_TIME (Main)"
+    ]
+
+    if len(start_rows) == 0:
+        raise ValueError(
+            "BLE_START_TIME (Main) がログファイルにありません"
+        )
+
+    return parse_datetime_or_duration(
+        start_rows.iloc[0]["Timestamp"]
+    )
+
 # ----------------------------------------
 # 汎用: 時刻 or 持続時間の柔軟パーサ
 # ----------------------------------------

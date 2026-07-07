@@ -47,12 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function getRequiredFiles(type, hasLog) {
         if (!config || !config.required_files) return [];
-
-        const requiredList = [...(config.required_files[type] || [])];
-        if (hasLog && !requiredList.includes('log.csv')) {
-            requiredList.unshift('log.csv');
-        }
-        return requiredList;
+        return [...(config.required_files[type] || [])];
     }
 
     function getSelectedFileNames() {
