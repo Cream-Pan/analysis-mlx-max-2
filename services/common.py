@@ -19,8 +19,6 @@ def get_uploaded_files_dict(files):
 
 def get_required_files(analysis_type, has_log):
     required = list(config.get('required_files', {}).get(analysis_type, []))
-    if has_log and analysis_type != 'show_files' and 'log.csv' not in required:
-        required.insert(0, 'log.csv')
     return required
 
 
@@ -29,7 +27,36 @@ def validate_required_files(uploaded_files, analysis_type, has_log):
     missing = [name for name in required if name not in uploaded_files]
     if missing:
         return False, f"必要なファイルが不足しています: {', '.join(missing)}"
+    if has_log:
+        try:
+            resolve_log_file(uploaded_files)
+        except ValueError as e:
+            return False, str(e)
     return True, None
+
+def resolve_log_file(uploaded_files):
+    candidates = []
+
+    for filename in uploaded_files.keys():
+        lower_name = filename.lower()
+
+        if lower_name.endswith('_log.csv'):
+            candidates.append(filename)
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if len(candidates) > 1:
+        raise ValueError(
+            f"ログファイルが複数あります: {', '.join(candidates)}"
+        )
+
+    if 'log.csv' in uploaded_files:
+        return 'log.csv'
+
+    raise ValueError(
+        "ログファイル(*_log.csv)が見つかりません"
+    )
 
 # ----------------------------------------
 # 汎用: 時刻 or 持続時間の柔軟パーサ
@@ -63,11 +90,12 @@ def parse_datetime_or_duration(value, base_day=None):
 # ----------------------------------------
 def load_log_tasks(uploaded_files, has_log, interval_min, start_time_limit, end_time_limit, base_day):
     if has_log:
-        if 'log.csv' not in uploaded_files:
-            raise ValueError("log.csv が必要です")
+        log_filename = resolve_log_file(uploaded_files)
 
-        df_log = pd.read_csv(io.BytesIO(uploaded_files['log.csv'].read()))
-        uploaded_files['log.csv'].seek(0)
+        df_log = pd.read_csv(
+            io.BytesIO(uploaded_files[log_filename].read())
+        )
+        uploaded_files[log_filename].seek(0)
 
         if 'Task_Name' not in df_log.columns or 'Timestamp' not in df_log.columns:
             raise ValueError("log.csv に必要な列(Task_Name, Timestamp)がありません")
