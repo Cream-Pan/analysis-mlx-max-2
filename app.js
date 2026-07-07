@@ -728,7 +728,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         resultDiv.innerHTML = '解析中...';
 
         try {
-            const response = await fetch('http://127.0.0.1:5000/upload', {
+            const response = await fetch('/upload', {
                 method: 'POST',
                 body: formData
             });
