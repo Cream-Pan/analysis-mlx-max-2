@@ -131,9 +131,9 @@ def load_log_tasks(uploaded_files, has_log, interval_min, start_time_limit, end_
         df_log['Timestamp_dt'] = df_log['Timestamp'].apply(lambda x: parse_datetime_or_duration(x, base_day))
         df_log = df_log.dropna(subset=['Task_Name', 'Timestamp_dt']).sort_values('Timestamp_dt')
 
-        task_names = config.get('task_names', [])
-        if task_names:
-            df_log = df_log[df_log['Task_Name'].isin(task_names)].copy()
+        # task_names = config.get('task_names', [])
+        # if task_names:
+        #     df_log = df_log[df_log['Task_Name'].isin(task_names)].copy()
 
         if len(df_log) < 2:
             raise ValueError("タスク境界が 2 つ未満です")

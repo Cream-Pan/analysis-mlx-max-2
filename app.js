@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let config = null;
 
-    const PPG_ONLY_MODES = new Set(['ppg_to_hr', 'ppg_analysis', 'ppg_hr_analysis']);
+    const PPG_ONLY_MODES = new Set(['ppg_to_hr']);
 
     // -----------------------------
     // 共通ヘルパー
@@ -197,7 +197,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function updateAnalysisOffsetVisibility() {
         const type = getSelectedAnalysisType();
-        const visible = isPpgOnlyMode(type);
+        const visible =
+        type === 'ppg_to_hr' ||
+        type === 'ppg_analysis' ||
+        type === 'ppg_hr_analysis';
 
         setVisible(offsetWrapper, visible);
         setVisible(durationWrapper, visible);
