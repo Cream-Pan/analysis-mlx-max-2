@@ -429,6 +429,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
 
+        const uniqueId = `ppg-analysis-${Date.now()}`;
+        resultEl.id = uniqueId;
+
         let html = `<h3>${result.title}</h3>`;
 
         if (result.status === 'error') {
@@ -472,6 +475,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             html += `</tbody></table>`;
         });
+
+
+        html += `
+            <div style="text-align: right; margin-top: 10px;">
+                <button onclick="saveResultsAsPng('${uniqueId}')">
+                    PNG保存
+                </button>
+            </div>
+        `;
 
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
