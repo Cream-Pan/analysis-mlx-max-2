@@ -405,23 +405,7 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offs
         if "RecvJST" not in df.columns:
             df = df.reset_index().rename(columns={"index": "RecvJST"})
 
-        # 解析開始オフセット適用
-        analysis_start_time = df["RecvJST"].min() + pd.Timedelta(seconds=analysis_start_offset_sec)
-
-        if analysis_duration_sec > 0:
-            analysis_end_time = analysis_start_time + pd.Timedelta(seconds=analysis_duration_sec)
-
-            if df["RecvJST"].max() < analysis_end_time:
-                available_sec = (df["RecvJST"].max() - analysis_start_time).total_seconds()
-                raise ValueError(
-                    f"指定した解析時間 {analysis_duration_sec:.1f} 秒を確保できません．"
-                    f"オフセット後に利用可能なのは {max(0.0, available_sec):.1f} 秒です．"
-                )
-
-            df = df[(df["RecvJST"] >= analysis_start_time) & (df["RecvJST"] < analysis_end_time)].copy()
-        else:
-            df = df[df["RecvJST"] >= analysis_start_time].copy()
-
+        # PPG→HR変換は，読み込んだ全区間を対象とする
         if len(df) < 2:
             raise ValueError("解析対象データが不足しています")
 
@@ -445,27 +429,6 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offs
         hr_bpm = estimate_hr_and_waveform(df, fs=estimated_fs)
         df["HR_BPM"] = hr_bpm
 
-        # 時間軸を index にして区間作成
-        df_plot = df.set_index("RecvJST").sort_index()
-
-        if has_log:
-            task_segments = load_log_tasks(
-                uploaded_files,
-                has_log,
-                interval_min,
-                df_plot.index.min(),
-                df_plot.index.max(),
-                df_plot.index.min().normalize()
-            )
-        else:
-            task_segments = [
-                {
-                    "Task_Name": "解析区間",
-                    "Start_Time": df_plot.index.min(),
-                    "End_Time": df_plot.index.max()
-                }
-            ]
-
         # ダウンロード用CSV
         output_df = df.copy()
         csv_text = output_df.to_csv(index=False)
@@ -476,20 +439,11 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offs
             "title": f"PPG→HR変換 結果 ({raw_filename})",
             "summary": {
                 "fs": int(estimated_fs),
-                "overall_corr": None if pd.isna(overall_corr) else float(overall_corr)
-            },
-            "task_segments": [
-                {
-                    "title": seg["Task_Name"],
-                    "start_time": seg["Start_Time"].isoformat(),
-                    "end_time": seg["End_Time"].isoformat()
-                }
-                for seg in task_segments
-            ],
-            "plot_data": {
-                "time": df["RecvJST"].dt.strftime("%Y-%m-%dT%H:%M:%S.%f").tolist(),
-                "ir": df["IR_Value"].where(pd.notna(df["IR_Value"]), None).tolist(),
-                "hr": pd.Series(df["HR_BPM"]).where(pd.notna(df["HR_BPM"]), None).tolist()
+                "overall_corr": (
+                    None
+                    if pd.isna(overall_corr)
+                    else float(overall_corr)
+                )
             },
             "download": {
                 "filename": f"{raw_filename.rsplit('.', 1)[0]}_HR.csv",
@@ -681,23 +635,14 @@ def perform_ppg_hr_comparison(uploaded_files, has_log, interval_min, analysis_st
             }
             end_limit = analysis_end_time
 
-        if has_log:
-            tasks = load_log_tasks(
-                uploaded_files,
-                has_log,
-                interval_min,
-                start_limit,
-                end_limit,
-                start_limit.normalize()
-            )
-        else:
-            tasks = [
-                {
-                    "Task_Name": "解析区間",
-                    "Start_Time": start_limit,
-                    "End_Time": end_limit
-                }
-            ]
+        tasks = load_log_tasks(
+            uploaded_files,
+            has_log,
+            interval_min,
+            start_limit,
+            end_limit,
+            start_limit.normalize()
+        )
 
         pairs = list(combinations(hr_filenames, 2))
         results = []

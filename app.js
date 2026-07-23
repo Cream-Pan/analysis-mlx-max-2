@@ -197,10 +197,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function updateAnalysisOffsetVisibility() {
         const type = getSelectedAnalysisType();
+        const hasLog = getEffectiveHasLog(type);
+
         const visible =
-        type === 'ppg_to_hr' ||
-        type === 'ppg_analysis' ||
-        type === 'ppg_hr_analysis';
+            (type === 'ppg_analysis' && !hasLog) ||
+            type === 'ppg_hr_analysis';
 
         setVisible(offsetWrapper, visible);
         setVisible(durationWrapper, visible);
@@ -288,14 +289,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
 
-        const uniqueId = `ppg-to-hr-${Date.now()}`;
-        const irCanvasId = `${uniqueId}-ir`;
-        const hrCanvasId = `${uniqueId}-hr`;
-
         let html = `<h3>${result.title}</h3>`;
 
         if (result.status === 'error') {
-            html += `<p style="color: red; font-weight: bold;">エラー: ${result.message}</p>`;
+            html += `
+                <p style="color: red; font-weight: bold;">
+                    エラー: ${result.message}
+                </p>
+            `;
+
             resultEl.innerHTML = html;
             resultDiv.appendChild(resultEl);
             return;
@@ -303,6 +305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const fs = result.summary?.fs ?? 'N/A';
         const overallCorr = result.summary?.overall_corr;
+
         const corrText =
             overallCorr === null || overallCorr === undefined
                 ? 'N/A'
@@ -310,119 +313,42 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         html += `
             <table>
-                <thead><tr><th>項目</th><th>値</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>項目</th>
+                        <th>値</th>
+                    </tr>
+                </thead>
                 <tbody>
-                    <tr><td>Fs</td><td>${fs} Hz</td></tr>
-                    <tr><td>全体相関係数 (IR vs RED)</td><td>${corrText}</td></tr>
+                    <tr>
+                        <td>Fs</td>
+                        <td>${fs} Hz</td>
+                    </tr>
+                    <tr>
+                        <td>全体相関係数（IR vs RED）</td>
+                        <td>${corrText}</td>
+                    </tr>
                 </tbody>
             </table>
 
-            <div class="chart-container" style="margin-top: 20px;">
-                <canvas id="${irCanvasId}"></canvas>
-            </div>
-
-            <div class="chart-container" style="margin-top: 20px;">
-                <canvas id="${hrCanvasId}"></canvas>
-            </div>
-
             <div style="text-align: right; margin-top: 10px;">
-                <button class="download-csv-btn">CSVダウンロード</button>
+                <button class="download-csv-btn">
+                    CSVダウンロード
+                </button>
             </div>
         `;
 
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
 
-        const makeAnnotations = (segments) => {
-            const annotations = {};
-            (segments || []).forEach((seg, idx) => {
-                annotations[`line${idx}`] = {
-                    type: 'line',
-                    xMin: seg.start_time,
-                    xMax: seg.start_time,
-                    borderColor: 'gold',
-                    borderWidth: 1,
-                    borderDash: [6, 6]
-                };
+        resultEl
+            .querySelector('.download-csv-btn')
+            ?.addEventListener('click', () => {
+                downloadCsvText(
+                    result.download.filename,
+                    result.download.csv_text
+                );
             });
-            return annotations;
-        };
-
-        const annotations = makeAnnotations(result.task_segments);
-
-        new Chart(document.getElementById(irCanvasId), {
-            type: 'line',
-            data: {
-                labels: result.plot_data.time,
-                datasets: [
-                    {
-                        label: 'Raw IR',
-                        data: result.plot_data.ir,
-                        pointRadius: 0,
-                        borderWidth: 1
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                parsing: false,
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            displayFormats: { second: 'HH:mm:ss' }
-                        }
-                    },
-                    y: {
-                        title: { display: true, text: 'IR Value' }
-                    }
-                },
-                plugins: {
-                    legend: { display: true },
-                    annotation: { annotations }
-                }
-            }
-        });
-
-        new Chart(document.getElementById(hrCanvasId), {
-            type: 'line',
-            data: {
-                labels: result.plot_data.time,
-                datasets: [
-                    {
-                        label: 'Estimated HR',
-                        data: result.plot_data.hr,
-                        pointRadius: 0,
-                        borderWidth: 1
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                parsing: false,
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: {
-                            displayFormats: { second: 'HH:mm:ss' }
-                        }
-                    },
-                    y: {
-                        suggestedMin: 40,
-                        suggestedMax: 180,
-                        title: { display: true, text: 'BPM' }
-                    }
-                },
-                plugins: {
-                    legend: { display: true },
-                    annotation: { annotations }
-                }
-            }
-        });
-
-        resultEl.querySelector('.download-csv-btn')?.addEventListener('click', () => {
-            downloadCsvText(result.download.filename, result.download.csv_text);
-        });
     }
 
     function displayPpgAnalysis(result) {
@@ -702,18 +628,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         const hasLog = getEffectiveHasLog(selectedType);
         const formData = new FormData();
 
-        const analysisStartOffsetSec = parseFloat(offsetInput.value);
-        if (isNaN(analysisStartOffsetSec) || analysisStartOffsetSec < 0) {
-            alert('解析開始オフセットには 0 以上の数値を入力してください。');
-            offsetInput.focus();
-            return;
-        }
+        const usesAnalysisRange =
+            (selectedType === 'ppg_analysis' && !hasLog) ||
+            selectedType === 'ppg_hr_analysis';
 
+        let analysisStartOffsetSec = 0;
         let analysisDurationSec = 0;
-        if (isPpgOnlyMode(selectedType)) {
+
+        if (usesAnalysisRange) {
+            analysisStartOffsetSec = parseFloat(offsetInput.value);
+
+            if (isNaN(analysisStartOffsetSec) || analysisStartOffsetSec < 0) {
+                alert('解析開始オフセットには 0 以上の数値を入力してください．');
+                offsetInput.focus();
+                return;
+            }
+
             analysisDurationSec = parseFloat(durationInput.value);
+
             if (isNaN(analysisDurationSec) || analysisDurationSec <= 0) {
-                alert('解析時間には 0 より大きい数値を入力してください。');
+                alert('解析時間には 0 より大きい数値を入力してください．');
                 durationInput.focus();
                 return;
             }
