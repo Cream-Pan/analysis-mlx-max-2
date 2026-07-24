@@ -38,6 +38,8 @@ def upload_files():
     interval_min = int(request.form.get('interval_min', 5))
     analysis_start_offset_sec = float(request.form.get('analysis_start_offset_sec', 0))
     analysis_duration_sec = float(request.form.get('analysis_duration_sec', 0))
+    preview_axis = request.form.get("preview_axis", "index")
+    preview_scale = request.form.get("preview_scale", "same")
     preview_column_values = request.form.getlist('preview_columns[]')
 
     try:
@@ -139,7 +141,10 @@ def upload_files():
                 "status": "success",
                 "data": perform_file_preview(
                     uploaded_files,
-                    preview_columns
+                    preview_columns,
+                    preview_axis,
+                    preview_scale,
+                    has_log
                 )
             })
 

@@ -167,3 +167,17 @@ button:hover {
   max-width: none !important;
   max-height: none !important;
 }
+
+.file-chart-scroll{
+  overflow-x:auto;
+  overflow-y:hidden;
+  width:100%;
+}
+
+.file-chart-inner{
+  height:420px;
+}
+
+.file-chart-scroll canvas{
+  max-width:none!important;
+}

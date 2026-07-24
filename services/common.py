@@ -71,9 +71,20 @@ def get_log_start_time(uploaded_files):
             "ログファイルに必要な列(Task_Name, Timestamp)がありません"
         )
 
+    task_name_clean = (
+        df_log["Task_Name"]
+        .astype(str)
+        .str.replace('"', '', regex=False)
+        .str.strip()
+        .str.lower()
+    )
+
+
     start_rows = df_log[
-        df_log["Task_Name"].astype(str).str.replace('"', '', regex=False)
-        == "BLE_START_TIME (Main)"
+        task_name_clean.str.contains(
+            "ble_start_time|start",
+            regex=True
+        )
     ]
 
     if len(start_rows) == 0:
@@ -170,6 +181,96 @@ def load_log_tasks(uploaded_files, has_log, interval_min, start_time_limit, end_
 
     return tasks
 
+def load_preview_tasks(uploaded_files, has_log, interval_min=5, start_time=None, end_time=None):
+    if not has_log:
+        if start_time is None or end_time is None:
+            return []
+        tasks = []
+        curr = start_time
+        idx = 1
+        while curr < end_time:
+            nxt = (
+                curr +
+                pd.Timedelta(minutes=interval_min)
+            )
+            if nxt > end_time:
+                nxt = end_time
+
+            tasks.append({
+                "name":
+                f"区間{idx}",
+                "start":
+                (
+                    curr-start_time
+                ).total_seconds(),
+
+                "end":
+                (
+                    nxt-start_time
+                ).total_seconds()
+            })
+
+            curr = nxt
+            idx += 1
+
+        return tasks
+
+    log_filename = resolve_log_file(uploaded_files)
+    df_log = pd.read_csv(
+        io.BytesIO(
+            uploaded_files[log_filename].read()
+        )
+    )
+    uploaded_files[log_filename].seek(0)
+
+    df_log["Task_Name"] = (
+        df_log["Task_Name"]
+        .astype(str)
+        .str.replace('"',"",regex=False)
+    )
+
+    df_log["Timestamp_dt"] = (
+        df_log["Timestamp"]
+        .apply(parse_datetime_or_duration)
+    )
+
+    df_log = (
+        df_log
+        .sort_values("Timestamp_dt")
+        .reset_index(drop=True)
+    )
+
+    df_log["End_Time"] = (
+        df_log["Timestamp_dt"]
+        .shift(-1)
+    )
+
+    df_log = df_log.dropna(
+        subset=["End_Time"]
+    )
+
+    start_time = get_log_start_time(uploaded_files)
+
+    return [
+        {
+        "name":row["Task_Name"],
+        "start":
+        (
+            row["Timestamp_dt"]
+            -
+            start_time
+        ).total_seconds(),
+
+        "end":
+        (
+            row["End_Time"]
+            -
+            start_time
+        ).total_seconds()
+        }
+        for _,row in df_log.iterrows()
+    ]
+
 
 def load_body_temp(file_obj):
     df = pd.read_csv(
@@ -190,7 +291,11 @@ def load_body_temp(file_obj):
 def _build_preview_sheet(
     df,
     sheet_name,
-    column_numbers
+    column_numbers,
+    preview_axis="index",
+    preview_scale="same",
+    time_values=None,
+    tasks=None
 ):
     series_list = []
     errors = []
@@ -227,10 +332,48 @@ def _build_preview_sheet(
             for value in numeric_series
         ]
 
+
+        # 正規化
+        if preview_scale == "normalize":
+
+            valid_values = [
+                v for v in values
+                if v is not None
+            ]
+
+            if len(valid_values) > 0:
+
+                min_v = min(valid_values)
+                max_v = max(valid_values)
+
+                if max_v != min_v:
+
+                    values = [
+                        (
+                            (v - min_v) /
+                            (max_v - min_v)
+                            if v is not None
+                            else None
+                        )
+                        for v in values
+                    ]
+
+        points = []
+        for index, value in enumerate(values):
+            if preview_axis == "time" and time_values is not None:
+                x = float(time_values[index])
+            else:
+                x = index + 1
+
+            points.append({
+                "x": x,
+                "y": value
+            })
+
         series_list.append({
             "column_number": column_number,
             "valid_count": valid_count,
-            "values": values
+            "points": points
         })
 
     return {
@@ -238,11 +381,12 @@ def _build_preview_sheet(
         "row_count": row_count,
         "column_count": column_count,
         "series": series_list,
-        "errors": errors
+        "errors": errors,
+        "tasks": tasks if tasks else []
     }
 
 
-def perform_file_preview(uploaded_files, column_numbers):
+def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", preview_scale="same", has_log=False, interval_min=5):
     results = []
 
     for filename, file_obj in uploaded_files.items():
@@ -255,6 +399,12 @@ def perform_file_preview(uploaded_files, column_numbers):
                     sheet_name=None,
                     header=None
                 )
+                time_values = None
+                tasks = []
+                if has_log:
+                    tasks = load_preview_tasks(
+                        uploaded_files
+                    )
 
                 results.append({
                     "filename": filename,
@@ -263,7 +413,11 @@ def perform_file_preview(uploaded_files, column_numbers):
                         _build_preview_sheet(
                             df,
                             sheet_name,
-                            column_numbers
+                            column_numbers,
+                            preview_axis,
+                            preview_scale,
+                            time_values,
+                            tasks
                         )
                         for sheet_name, df in excel_sheets.items()
                     ]
@@ -272,9 +426,60 @@ def perform_file_preview(uploaded_files, column_numbers):
             elif lower_filename.endswith('.csv'):
                 df = pd.read_csv(
                     io.BytesIO(file_obj.read()),
-                    header=None,
                     low_memory=False
                 )
+                time_values = None
+
+                if has_log and preview_axis == "time":
+                    recv_col = None
+                    for col in df.columns:
+                        if "RecvJST" in str(col):
+                            recv_col = col
+                            break
+
+                    if recv_col is not None:
+                        base_time = get_log_start_time(
+                            uploaded_files
+                        )
+
+                        recv_time = (
+                            df[recv_col]
+                            .apply(parse_datetime_or_duration)
+                        )
+
+                        time_values = (
+                            recv_time -
+                            base_time
+                        ).dt.total_seconds().tolist()
+
+                tasks = []
+                if has_log:
+                    tasks = load_preview_tasks(
+                        uploaded_files,
+                        True
+                    )
+                else:
+                    if preview_axis == "time" and time_values is not None:
+
+                        total_time = time_values[-1]
+                    else:
+                        total_time = len(df)
+
+                    start_time = pd.Timestamp(0)
+                    end_time = (
+                        start_time +
+                        pd.Timedelta(
+                            seconds=total_time
+                        )
+                    )
+
+                    tasks = load_preview_tasks(
+                        uploaded_files,
+                        False,
+                        interval_min,
+                        start_time,
+                        end_time
+                    )
 
                 results.append({
                     "filename": filename,
@@ -283,7 +488,11 @@ def perform_file_preview(uploaded_files, column_numbers):
                         _build_preview_sheet(
                             df,
                             None,
-                            column_numbers
+                            column_numbers,
+                            preview_axis,
+                            preview_scale,
+                            time_values,
+                            tasks
                         )
                     ]
                 })

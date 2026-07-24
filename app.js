@@ -12,6 +12,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const durationWrapper = document.getElementById('analysis-duration-wrapper');
     const previewColumnsWrapper = document.getElementById('preview-columns-wrapper');
     const previewColumnsInput = document.getElementById('previewColumns');
+    const previewAxis = document.getElementById('previewAxis');
+    const previewScale = document.getElementById('previewScale');
+    const previewAxisWrapper = document.getElementById('preview-axis-wrapper');
+    const previewScaleWrapper = document.getElementById('preview-scale-wrapper');
     const submitButton = uploadForm.querySelector('button[type="submit"]');
     
 
@@ -139,8 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const type = getSelectedAnalysisType();
 
         const hideLogOption =
-            isPpgOnlyMode(type) ||
-            type === 'show_files';
+            isPpgOnlyMode(type);
 
         if (hideLogOption && logCheckbox) {
             logCheckbox.checked = false;
@@ -240,12 +243,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         setVisible(durationWrapper, visible);
     }
 
-    function updatePreviewColumnsVisibility() {
+    function updatePreviewColumnsVisibility(){
         const type = getSelectedAnalysisType();
+        const visible = type === 'show_files';
 
         setVisible(
             previewColumnsWrapper,
-            type === 'show_files'
+            visible
+        );
+
+        setVisible(
+            previewAxisWrapper,
+            visible
+        );
+
+        setVisible(
+            previewScaleWrapper,
+            visible
         );
     }
 
@@ -618,10 +632,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     return {
                         label: `${series.column_number}列目`,
-                        data: series.values.map((value, rowIndex) => ({
-                            x: rowIndex + 1,
-                            y: value
-                        })),
+                        data:
+                        series.points.map(
+                            point=>({
+                                x:point.x,
+                                y:point.y
+                            })
+                        ),
                         borderColor: color,
                         backgroundColor: color,
                         borderWidth: 1,
@@ -655,7 +672,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 type: 'linear',
                                 title: {
                                     display: true,
-                                    text: '行番号'
+                                    text:
+                                    (sheet.tasks.length > 0 && previewAxis.value==="time")
+                                    ?
+                                    "時間[s]"
+                                    :
+                                    "行番号"
                                 },
                                 ticks: {
                                     maxTicksLimit: 20
@@ -671,30 +693,51 @@ document.addEventListener('DOMContentLoaded', async () => {
                         },
 
                         plugins: {
-                            legend: {
-                                display: true
+                            annotation:{
+                                annotations:
+                                    sheet.tasks
+                                    ?
+                                    Object.fromEntries(
+                                        sheet.tasks.map(
+                                            (task,i)=>[
+                                                `task${i}`,
+                                                {
+                                                    type:"box",
+
+                                                    xMin:task.start,
+                                                    xMax:task.end,
+
+                                                    backgroundColor:
+                                                    "rgba(100,100,100,0.08)",
+
+                                                    label:{
+                                                        display:true,
+                                                        content:
+                                                        task.name
+                                                    }
+                                                }
+                                            ]
+                                        )
+                                    )
+                                    :
+                                    {}
+
                             },
 
-                            tooltip: {
-                                callbacks: {
-                                    title(items) {
-                                        if (!items.length) {
-                                            return '';
-                                        }
-
-                                        return `行番号: ${items[0].parsed.x}`;
-                                    }
+                            zoom:{
+                                zoom:{
+                                    wheel:{
+                                    enabled:true
+                                    },
+                                    pinch:{
+                                    enabled:true
+                                    },
+                                    mode:"x"
+                                },
+                                pan:{
+                                enabled:true,
+                                mode:"x"
                                 }
-                            },
-
-                            /*
-                            * データ数が非常に多い場合のみ描画点を間引き，
-                            * ブラウザの停止を防ぐ．
-                            */
-                            decimation: {
-                                enabled: rowCount > 10000,
-                                algorithm: 'min-max',
-                                threshold: 10000
                             }
                         }
                     }
@@ -901,6 +944,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 String(columnNumber)
             );
         });
+
+        if(selectedType === "show_files"){
+            formData.append(
+                "preview_axis",
+                previewAxis.value
+            );
+            formData.append(
+                "preview_scale",
+                previewScale.value
+            );
+        }
 
         for (const file of fileInput.files) {
             formData.append('files', file);

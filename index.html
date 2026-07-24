@@ -10,6 +10,8 @@
         <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js">
+</script>
     </head>
     <body>
         <h1>ファイル解析アプリ</h1>
@@ -123,13 +125,13 @@
                     横軸：
                 </label>
                 <select id="previewAxis">
-                <option value="index">
-                    行番号
-                </option>
+                    <option value="index">
+                        行番号
+                    </option>
 
-                <option value="time">
-                    時間
-                </option>
+                    <option value="time">
+                        時間
+                    </option>
                 </select>
             </div>
             <div id="preview-scale-wrapper" style="display:none">
@@ -137,13 +139,13 @@
                     スケール：
                 </label>
                 <select id="previewScale">
-                <option value="same">
-                    同一軸
-                </option>
+                    <option value="same">
+                        同一軸
+                    </option>
 
-                <option value="normalize">
-                    列ごと正規化
-                </option>
+                    <option value="normalize">
+                        列ごと正規化
+                    </option>
                 </select>
             </div>
             <div id="required-files-msg" style="margin-top: 10px; font-size: 0.9em; color: #666; min-height: 1.5em;">
