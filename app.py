@@ -38,6 +38,16 @@ def upload_files():
     interval_min = int(request.form.get('interval_min', 5))
     analysis_start_offset_sec = float(request.form.get('analysis_start_offset_sec', 0))
     analysis_duration_sec = float(request.form.get('analysis_duration_sec', 0))
+    preview_column_values = request.form.getlist('preview_columns[]')
+
+    try:
+        preview_columns = sorted({
+            int(value)
+            for value in preview_column_values
+            if str(value).strip()
+        })
+    except ValueError:
+        preview_columns = []
 
     if not files:
         return jsonify([{
@@ -113,10 +123,24 @@ def upload_files():
             )
 
         elif atype == 'show_files':
+            if (
+                not preview_columns or
+                any(column_number <= 0 for column_number in preview_columns)
+            ):
+                results.append({
+                    "analysis_type": atype,
+                    "status": "error",
+                    "message": "プロットする列番号を1つ以上指定してください"
+                })
+                continue
+
             results.append({
                 "analysis_type": atype,
                 "status": "success",
-                "data": perform_file_preview(uploaded_files)
+                "data": perform_file_preview(
+                    uploaded_files,
+                    preview_columns
+                )
             })
 
         else:

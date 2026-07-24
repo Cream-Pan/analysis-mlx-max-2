@@ -187,51 +187,127 @@ def load_body_temp(file_obj):
     return df.dropna(subset=['dt', 'temp']).set_index('dt').sort_index()
 
 
-def perform_file_preview(uploaded_files):
+def _build_preview_sheet(
+    df,
+    sheet_name,
+    column_numbers
+):
+    series_list = []
+    errors = []
+
+    row_count = len(df)
+    column_count = df.shape[1]
+
+    for column_number in column_numbers:
+        column_index = column_number - 1
+
+        if column_index >= column_count:
+            errors.append(
+                f"{column_number}列目は存在しません"
+                f"（このデータは{column_count}列です）"
+            )
+            continue
+
+        numeric_series = pd.to_numeric(
+            df.iloc[:, column_index],
+            errors='coerce'
+        )
+
+        valid_count = int(numeric_series.notna().sum())
+
+        if valid_count == 0:
+            errors.append(
+                f"{column_number}列目には"
+                "プロット可能な数値がありません"
+            )
+            continue
+
+        values = [
+            None if pd.isna(value) else float(value)
+            for value in numeric_series
+        ]
+
+        series_list.append({
+            "column_number": column_number,
+            "valid_count": valid_count,
+            "values": values
+        })
+
+    return {
+        "sheet_name": sheet_name,
+        "row_count": row_count,
+        "column_count": column_count,
+        "series": series_list,
+        "errors": errors
+    }
+
+
+def perform_file_preview(uploaded_files, column_numbers):
     results = []
 
-    for fn, f in uploaded_files.items():
+    for filename, file_obj in uploaded_files.items():
+        lower_filename = filename.lower()
+
         try:
-            if fn.endswith(('.xlsx', '.xls')):
-                xls = pd.read_excel(io.BytesIO(f.read()), sheet_name=None, header=None)
-                f.seek(0)
+            if lower_filename.endswith(('.xlsx', '.xls')):
+                excel_sheets = pd.read_excel(
+                    io.BytesIO(file_obj.read()),
+                    sheet_name=None,
+                    header=None
+                )
+
                 results.append({
-                    "filename": fn,
+                    "filename": filename,
                     "type": "excel",
                     "sheets": [
-                        {
-                            "sheet_name": s,
-                            "data": df.head(5).astype(str).iloc[:, 0].tolist()
-                        }
-                        for s, df in xls.items()
+                        _build_preview_sheet(
+                            df,
+                            sheet_name,
+                            column_numbers
+                        )
+                        for sheet_name, df in excel_sheets.items()
                     ]
                 })
 
-            elif fn.endswith('.csv'):
-                df = pd.read_csv(io.BytesIO(f.read()), header=None, nrows=5)
-                f.seek(0)
+            elif lower_filename.endswith('.csv'):
+                df = pd.read_csv(
+                    io.BytesIO(file_obj.read()),
+                    header=None,
+                    low_memory=False
+                )
+
                 results.append({
-                    "filename": fn,
+                    "filename": filename,
                     "type": "csv",
                     "sheets": [
-                        {
-                            "sheet_name": None,
-                            "data": df.iloc[:, 0].astype(str).tolist()
-                        }
+                        _build_preview_sheet(
+                            df,
+                            None,
+                            column_numbers
+                        )
                     ]
                 })
 
-        except Exception as e:
-            f.seek(0)
+            else:
+                results.append({
+                    "filename": filename,
+                    "type": "error",
+                    "message": (
+                        "対応していないファイル形式です．"
+                        "CSV，XLSX，XLSのみ対応しています．"
+                    ),
+                    "sheets": []
+                })
+
+        except Exception as error:
             results.append({
-                "filename": fn,
+                "filename": filename,
                 "type": "error",
-                "sheets": [
-                    {
-                        "sheet_name": None,
-                        "data": [f"エラー: {e}"]
-                    }
-                ]
+                "message": f"エラー: {error}",
+                "sheets": []
             })
+
+        finally:
+            file_obj.seek(0)
 
     return results

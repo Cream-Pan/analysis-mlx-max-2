@@ -10,7 +10,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const offsetWrapper = document.getElementById('analysis-offset-wrapper');
     const durationInput = document.getElementById('analysisDurationSec');
     const durationWrapper = document.getElementById('analysis-duration-wrapper');
+    const previewColumnsWrapper = document.getElementById('preview-columns-wrapper');
+    const previewColumnsInput = document.getElementById('previewColumns');
     const submitButton = uploadForm.querySelector('button[type="submit"]');
+    
 
     // logfile-wrapper が未設定でも最低限落ちないようにする
     const logWrapper =
@@ -52,6 +55,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function getSelectedFileNames() {
         return Array.from(fileInput.files).map(file => file.name);
+    }
+
+    function parsePreviewColumns() {
+        const rawValue = previewColumnsInput?.value?.trim() ?? '';
+
+        if (!rawValue) {
+            return [];
+        }
+
+        const tokens = rawValue
+            .split(/[,\s，]+/)
+            .map(value => value.trim())
+            .filter(Boolean);
+
+        const columnNumbers = tokens.map(value => Number(value));
+
+        const hasInvalidValue = columnNumbers.some(
+            value => !Number.isInteger(value) || value <= 0
+        );
+
+        if (hasInvalidValue) {
+            return null;
+        }
+
+        return [...new Set(columnNumbers)].sort((a, b) => a - b);
     }
 
     function validateRequiredFiles() {
@@ -109,13 +137,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function updateLogUiVisibility() {
         const type = getSelectedAnalysisType();
-        const ppgOnly = isPpgOnlyMode(type);
 
-        if (ppgOnly && logCheckbox) {
+        const hideLogOption =
+            isPpgOnlyMode(type) ||
+            type === 'show_files';
+
+        if (hideLogOption && logCheckbox) {
             logCheckbox.checked = false;
         }
 
-        setVisible(logWrapper, !ppgOnly);
+        setVisible(logWrapper, !hideLogOption);
     }
 
     function displayPpgHrAnalysis(result) {
@@ -185,9 +216,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function updateIntervalInputVisibility() {
         const type = getSelectedAnalysisType();
-        const ppgOnly = isPpgOnlyMode(type);
 
-        if (ppgOnly) {
+        if (
+            isPpgOnlyMode(type) ||
+            type === 'show_files'
+        ) {
             setVisible(intervalWrapper, false);
             return;
         }
@@ -207,10 +240,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         setVisible(durationWrapper, visible);
     }
 
+    function updatePreviewColumnsVisibility() {
+        const type = getSelectedAnalysisType();
+
+        setVisible(
+            previewColumnsWrapper,
+            type === 'show_files'
+        );
+    }
+
     function syncUiState() {
         updateLogUiVisibility();
         updateIntervalInputVisibility();
         updateAnalysisOffsetVisibility();
+        updatePreviewColumnsVisibility();
         updateRequiredFiles();
     }
 
@@ -461,42 +504,203 @@ document.addEventListener('DOMContentLoaded', async () => {
     function displayFilePreview(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
-        let html = `<h3>ファイル内容の表示</h3>`;
 
-        if (result.status === 'error' || !result.data) {
-            html += `<p style="color: red; font-weight: bold;">エラー: ${result.message || 'データを表示できません'}</p>`;
-        } else {
-            result.data.forEach(file => {
-                html += `<h4>${file.filename}</h4>`;
+        const title = document.createElement('h3');
+        title.textContent = 'ファイル列グラフ';
+        resultEl.appendChild(title);
 
-                if (file.sheets && Array.isArray(file.sheets)) {
-                    file.sheets.forEach(sheet => {
-                        if (sheet.sheet_name) {
-                            const safeSheetName = String(sheet.sheet_name)
-                                .replace(/</g, '&lt;')
-                                .replace(/>/g, '&gt;');
-                            html += `<h5 style="margin:0.5em 0 0.2em 1.5em;">シート: ${safeSheetName}</h5>`;
-                        }
+        resultDiv.appendChild(resultEl);
 
-                        html += '<ul>';
-                        if (sheet.data && Array.isArray(sheet.data)) {
-                            sheet.data.forEach(item => {
-                                const safeItem = String(item)
-                                    .replace(/</g, '&lt;')
-                                    .replace(/>/g, '&gt;');
-                                html += `<li>${safeItem}</li>`;
-                            });
-                        } else {
-                            html += '<li>(データがありません)</li>';
-                        }
-                        html += '</ul>';
-                    });
-                }
-            });
+        if (result.status === 'error' || !Array.isArray(result.data)) {
+            const errorMessage = document.createElement('p');
+            errorMessage.style.color = 'red';
+            errorMessage.style.fontWeight = 'bold';
+            errorMessage.textContent =
+                `エラー: ${result.message || 'データを表示できません'}`;
+
+            resultEl.appendChild(errorMessage);
+            return;
         }
 
-        resultEl.innerHTML = html;
-        resultDiv.appendChild(resultEl);
+        const chartColors = [
+            '#3366cc',
+            '#dc3912',
+            '#109618',
+            '#ff9900',
+            '#990099',
+            '#0099c6',
+            '#dd4477',
+            '#66aa00'
+        ];
+
+        result.data.forEach((file, fileIndex) => {
+            const fileTitle = document.createElement('h4');
+            fileTitle.textContent = file.filename;
+            resultEl.appendChild(fileTitle);
+
+            if (file.type === 'error') {
+                const errorMessage = document.createElement('p');
+                errorMessage.style.color = 'red';
+                errorMessage.textContent =
+                    file.message || 'ファイルを読み込めませんでした．';
+
+                resultEl.appendChild(errorMessage);
+                return;
+            }
+
+            if (!Array.isArray(file.sheets) || file.sheets.length === 0) {
+                const emptyMessage = document.createElement('p');
+                emptyMessage.textContent = '表示できるデータがありません．';
+                resultEl.appendChild(emptyMessage);
+                return;
+            }
+
+            file.sheets.forEach((sheet, sheetIndex) => {
+                if (sheet.sheet_name) {
+                    const sheetTitle = document.createElement('h5');
+                    sheetTitle.className = 'file-chart-sheet-title';
+                    sheetTitle.textContent = `シート: ${sheet.sheet_name}`;
+                    resultEl.appendChild(sheetTitle);
+                }
+
+                if (Array.isArray(sheet.errors)) {
+                    sheet.errors.forEach(errorText => {
+                        const warning = document.createElement('p');
+                        warning.className = 'file-chart-warning';
+                        warning.textContent = errorText;
+                        resultEl.appendChild(warning);
+                    });
+                }
+
+                if (
+                    !Array.isArray(sheet.series) ||
+                    sheet.series.length === 0
+                ) {
+                    const emptyMessage = document.createElement('p');
+                    emptyMessage.textContent =
+                        '指定した列にプロット可能な数値データがありません．';
+
+                    resultEl.appendChild(emptyMessage);
+                    return;
+                }
+
+                const rowCount = Number(sheet.row_count) || Math.max(
+                    ...sheet.series.map(series => series.values?.length || 0)
+                );
+
+                /*
+                * 1 データあたり約 3 px とし，データ数に応じて横長にする．
+                * 極端に巨大なキャンバスを防ぐため，上限は 60000 px とする．
+                */
+                const chartWidth = Math.min(
+                    60000,
+                    Math.max(900, rowCount * 3)
+                );
+
+                const scrollContainer = document.createElement('div');
+                scrollContainer.className = 'file-chart-scroll';
+
+                const chartInner = document.createElement('div');
+                chartInner.className = 'file-chart-inner';
+                chartInner.style.width = `${chartWidth}px`;
+
+                const canvas = document.createElement('canvas');
+                canvas.width = chartWidth;
+                canvas.height = 420;
+
+                chartInner.appendChild(canvas);
+                scrollContainer.appendChild(chartInner);
+                resultEl.appendChild(scrollContainer);
+
+                const datasets = sheet.series.map((series, seriesIndex) => {
+                    const color =
+                        chartColors[seriesIndex % chartColors.length];
+
+                    return {
+                        label: `${series.column_number}列目`,
+                        data: series.values.map((value, rowIndex) => ({
+                            x: rowIndex + 1,
+                            y: value
+                        })),
+                        borderColor: color,
+                        backgroundColor: color,
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        pointHoverRadius: 3,
+                        spanGaps: false
+                    };
+                });
+
+                new Chart(canvas.getContext('2d'), {
+                    type: 'line',
+
+                    data: {
+                        datasets
+                    },
+
+                    options: {
+                        responsive: false,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        parsing: false,
+                        normalized: true,
+
+                        interaction: {
+                            mode: 'nearest',
+                            intersect: false
+                        },
+
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: '行番号'
+                                },
+                                ticks: {
+                                    maxTicksLimit: 20
+                                }
+                            },
+
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: '値'
+                                }
+                            }
+                        },
+
+                        plugins: {
+                            legend: {
+                                display: true
+                            },
+
+                            tooltip: {
+                                callbacks: {
+                                    title(items) {
+                                        if (!items.length) {
+                                            return '';
+                                        }
+
+                                        return `行番号: ${items[0].parsed.x}`;
+                                    }
+                                }
+                            },
+
+                            /*
+                            * データ数が非常に多い場合のみ描画点を間引き，
+                            * ブラウザの停止を防ぐ．
+                            */
+                            decimation: {
+                                enabled: rowCount > 10000,
+                                algorithm: 'min-max',
+                                threshold: 10000
+                            }
+                        }
+                    }
+                });
+            });
+        });
     }
 
     function displayMlxEvaluation(result) {
@@ -628,6 +832,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         const hasLog = getEffectiveHasLog(selectedType);
         const formData = new FormData();
 
+        let previewColumns = [];
+
+        if (selectedType === 'show_files') {
+            previewColumns = parsePreviewColumns();
+
+            if (previewColumns === null) {
+                alert(
+                    '列番号には，1 以上の整数を入力してください．\n' +
+                    '複数列を指定する場合は，例のように 1,3,5 と入力してください．'
+                );
+
+                previewColumnsInput.focus();
+                return;
+            }
+
+            if (previewColumns.length === 0) {
+                alert('プロットする列番号を 1 つ以上指定してください．');
+
+                previewColumnsInput.focus();
+                return;
+            }
+        }
+
         const usesAnalysisRange =
             (selectedType === 'ppg_analysis' && !hasLog) ||
             selectedType === 'ppg_hr_analysis';
@@ -654,7 +881,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         let intervalMin = 0;
-        if (!hasLog && !isPpgOnlyMode(selectedType)) {
+        if (!hasLog && !isPpgOnlyMode(selectedType) && selectedType !== 'show_files') {
             intervalMin = parseInt(intervalInput.value, 10);
             if (isNaN(intervalMin) || intervalMin <= 0) {
                 alert('区切り分数には 1 以上の整数を入力してください。');
@@ -667,6 +894,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         formData.append('analysis_duration_sec', analysisDurationSec);
         formData.append('has_log', hasLog);
         formData.append('interval_min', intervalMin);
+
+        previewColumns.forEach(columnNumber => {
+            formData.append(
+                'preview_columns[]',
+                String(columnNumber)
+            );
+        });
 
         for (const file of fileInput.files) {
             formData.append('files', file);

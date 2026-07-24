@@ -102,6 +102,50 @@
                 >
                 <span>秒間を解析対象にする</span>
             </div>
+            <div class="controls" id="preview-columns-wrapper" style="display: none;">
+                <label for="previewColumns" style="font-weight: bold;">
+                    プロットする列番号：
+                </label>
+
+                <input
+                    type="text"
+                    id="previewColumns"
+                    value="1"
+                    placeholder="例：1,3,5"
+                    inputmode="numeric"
+                    style="width: 180px;"
+                >
+
+                <span>1 列目を 1 とし，複数列はカンマで区切る</span>
+            </div>
+            <div id="preview-axis-wrapper" style="display:none">
+                <label>
+                    横軸：
+                </label>
+                <select id="previewAxis">
+                <option value="index">
+                    行番号
+                </option>
+
+                <option value="time">
+                    時間
+                </option>
+                </select>
+            </div>
+            <div id="preview-scale-wrapper" style="display:none">
+                <label>
+                    スケール：
+                </label>
+                <select id="previewScale">
+                <option value="same">
+                    同一軸
+                </option>
+
+                <option value="normalize">
+                    列ごと正規化
+                </option>
+                </select>
+            </div>
             <div id="required-files-msg" style="margin-top: 10px; font-size: 0.9em; color: #666; min-height: 1.5em;">
                 必要ファイル：
             </div>

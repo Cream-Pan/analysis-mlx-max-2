@@ -133,3 +133,37 @@ button:hover {
     font-family: 'Courier New', Courier, monospace;
     font-size: 0.9em;
 }
+
+/* ファイル列グラフ */
+.file-chart-sheet-title {
+  margin: 1em 0 0.5em 1em;
+  color: #555;
+}
+
+.file-chart-warning {
+  margin-left: 1em;
+  color: #b45309;
+  font-weight: bold;
+}
+
+.file-chart-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0.8em 0 1.5em;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background-color: #fff;
+}
+
+.file-chart-inner {
+  position: relative;
+  min-width: 900px;
+  height: 420px;
+}
+
+.file-chart-scroll canvas {
+  display: block;
+  max-width: none !important;
+  max-height: none !important;
+}
