@@ -6,14 +6,16 @@
     "mlx_reevaluation": ["body_temperature.csv", "mlx_re.csv"],
     "ppg_to_hr": [],
     "ppg_analysis": [],
-    "ppg_hr_analysis": []
+    "ppg_hr_analysis": [],
+    "ppg_acc_analysis": []
   },
 
   "required_file_notes": {
     "mlx_evaluation": "3-Device_Measurement.xlsx または MLX_*.csv",
     "ppg_to_hr": "IR_Value, RED_Value, Accel_X_mg, Accel_Y_mg, Accel_Z_mg, SensorElapsed_ms, RecvJST を含む PPG 生データ CSV 1つ",
     "ppg_analysis": "任意の *_HR.csv を 2 つ以上",
-    "ppg_hr_analysis": "IR_Value と RecvJST を含む *_HR.csv または PPG 生データ CSV 1つ以上"
+    "ppg_hr_analysis": "IR_Value と RecvJST を含む *_HR.csv または PPG 生データ CSV 1つ以上",
+    "ppg_acc_analysis": "Finを含むPPG生データCSV 1つ，耳たぶPPG生データCSV 1つ，*_log.csv 1つ"
   },
 
   "mlx_sheet_candidates": [

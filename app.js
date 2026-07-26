@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let config = null;
 
     const PPG_ONLY_MODES = new Set(['ppg_to_hr']);
+    const LOG_REQUIRED_MODES = new Set(['ppg_acc_analysis']);
 
     // -----------------------------
     // 共通ヘルパー
@@ -41,6 +42,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function isPpgOnlyMode(type = getSelectedAnalysisType()) {
         return PPG_ONLY_MODES.has(type);
+    }
+
+    function isLogRequiredMode(type = getSelectedAnalysisType()) {
+        return LOG_REQUIRED_MODES.has(type);
     }
 
     function setVisible(element, visible, display = 'flex') {
@@ -145,11 +150,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         const hideLogOption =
             isPpgOnlyMode(type);
 
+        const requireLog =
+            isLogRequiredMode(type);
+
         if (hideLogOption && logCheckbox) {
             logCheckbox.checked = false;
         }
 
-        setVisible(logWrapper, !hideLogOption);
+        if (requireLog && logCheckbox) {
+            logCheckbox.checked = true;
+        }
+
+        if (logCheckbox) {
+            logCheckbox.disabled = requireLog;
+        }
+
+        setVisible(
+            logWrapper,
+            !hideLogOption
+        );
     }
 
     function displayPpgHrAnalysis(result) {
@@ -389,23 +408,322 @@ document.addEventListener('DOMContentLoaded', async () => {
             </table>
 
             <div style="text-align: right; margin-top: 10px;">
-                <button class="download-csv-btn">
-                    CSVダウンロード
+                <button class="download-hr-csv-btn">
+                    HR CSVダウンロード
                 </button>
+
+                ${
+                    result.quality_download
+                        ? `
+                            <button class="download-quality-csv-btn">
+                                Quality CSVダウンロード
+                            </button>
+                        `
+                        : ''
+                }
             </div>
         `;
 
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
 
-        resultEl
-            .querySelector('.download-csv-btn')
-            ?.addEventListener('click', () => {
+        const hrDownloadButton = resultEl.querySelector(
+            '.download-hr-csv-btn'
+        );
+
+        if (hrDownloadButton && result.download) {
+            hrDownloadButton.addEventListener('click', () => {
                 downloadCsvText(
                     result.download.filename,
                     result.download.csv_text
                 );
             });
+        }
+
+        const qualityDownloadButton = resultEl.querySelector(
+            '.download-quality-csv-btn'
+        );
+
+        if (
+            qualityDownloadButton &&
+            result.quality_download
+        ) {
+            qualityDownloadButton.addEventListener('click', () => {
+                downloadCsvText(
+                    result.quality_download.filename,
+                    result.quality_download.csv_text
+                );
+            });
+        }
+    }
+
+    function formatPpgAccValue(
+        value,
+        digits = 1,
+        suffix = ''
+    ) {
+        if (
+            value === null ||
+            value === undefined ||
+            value === ''
+        ) {
+            return '―';
+        }
+
+        const numeric = Number(value);
+
+        if (!Number.isFinite(numeric)) {
+            return '―';
+        }
+
+        return `${numeric.toFixed(digits)}${suffix}`;
+    }
+
+    function displayPpgAccAnalysis(result) {
+        const resultEl = document.createElement('div');
+        resultEl.className = 'result-item';
+
+        let html = `
+            <h3>
+                ${result.title || 'PPG＋ACC解析結果'}
+            </h3>
+        `;
+
+        if (result.status === 'error') {
+            html += `
+                <p style="color: red; font-weight: bold;">
+                    エラー: ${result.message}
+                </p>
+            `;
+
+            resultEl.innerHTML = html;
+            resultDiv.appendChild(resultEl);
+            return;
+        }
+
+        const rows = Array.isArray(result.data)
+            ? result.data
+            : [];
+
+        html += `
+            <p>
+                Fin：
+                <b>${result.fin_filename || '不明'}</b>
+                <br>
+
+                耳たぶ：
+                <b>${result.ear_filename || '不明'}</b>
+            </p>
+
+            <div class="table-scroll">
+                <table class="ppg-acc-table">
+                    <thead>
+                        <tr>
+                            <th>タスク名</th>
+
+                            <th>Fin全窓数</th>
+                            <th>Fin Lost率</th>
+                            <th>Fin Motion Artifact率</th>
+                            <th>Fin HR利用可能率</th>
+
+                            <th>耳たぶ全窓数</th>
+                            <th>耳たぶ Lost率</th>
+                            <th>耳たぶ Motion Artifact率</th>
+                            <th>耳たぶ HR利用可能率</th>
+
+                            <th>有効ペア窓数</th>
+                            <th>有効ペア窓率</th>
+
+                            <th>MAE</th>
+                            <th>RMSE</th>
+                            <th>Bias</th>
+
+                            <th>評価判定</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+        `;
+
+        rows.forEach(row => {
+            html += `
+                <tr>
+                    <td>
+                        ${row.Task_Name ?? '―'}
+                    </td>
+
+                    <td>
+                        ${row.Fin_Total_Window_Count ?? 0}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Fin_Lost_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Fin_Motion_Artifact_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Fin_HR_Usable_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${row.Ear_Total_Window_Count ?? 0}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Ear_Lost_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Ear_Motion_Artifact_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Ear_HR_Usable_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${row.Valid_Pair_Count ?? 0}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Valid_Pair_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.MAE,
+                            3
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.RMSE,
+                            3
+                        )}
+                    </td>
+
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Bias,
+                            3
+                        )}
+                    </td>
+
+                    <td>
+                        ${row.Evaluation ?? '―'}
+                    </td>
+                </tr>
+            `;
+        });
+
+        if (rows.length === 0) {
+            html += `
+                <tr>
+                    <td colspan="15">
+                        表示できる解析結果がありません．
+                    </td>
+                </tr>
+            `;
+        }
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="text-align: right; margin-top: 10px;">
+                ${
+                    result.summary_download
+                        ? `
+                            <button
+                                class="download-ppg-acc-summary-btn"
+                            >
+                                タスク集計CSVダウンロード
+                            </button>
+                        `
+                        : ''
+                }
+
+                ${
+                    result.detail_download
+                        ? `
+                            <button
+                                class="download-ppg-acc-detail-btn"
+                            >
+                                窓詳細CSVダウンロード
+                            </button>
+                        `
+                        : ''
+                }
+            </div>
+        `;
+
+        resultEl.innerHTML = html;
+        resultDiv.appendChild(resultEl);
+
+        const summaryButton = resultEl.querySelector(
+            '.download-ppg-acc-summary-btn'
+        );
+
+        if (
+            summaryButton &&
+            result.summary_download
+        ) {
+            summaryButton.addEventListener('click', () => {
+                downloadCsvText(
+                    result.summary_download.filename,
+                    result.summary_download.csv_text
+                );
+            });
+        }
+
+        const detailButton = resultEl.querySelector(
+            '.download-ppg-acc-detail-btn'
+        );
+
+        if (
+            detailButton &&
+            result.detail_download
+        ) {
+            detailButton.addEventListener('click', () => {
+                downloadCsvText(
+                    result.detail_download.filename,
+                    result.detail_download.csv_text
+                );
+            });
+        }
     }
 
     function displayPpgAnalysis(result) {
@@ -999,6 +1317,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         break;
                     case 'ppg_analysis':
                         displayPpgAnalysis(result);
+                        break;
+                    case 'ppg_acc_analysis':
+                        displayPpgAccAnalysis(result);
                         break;
                     case 'ppg_hr_analysis':
                         displayPpgHrAnalysis(result);

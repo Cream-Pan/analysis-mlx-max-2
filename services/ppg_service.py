@@ -203,7 +203,7 @@ def resolve_ppg_wave_files(uploaded_files):
 
     return matched
 
-def estimate_hr_and_waveform(df, fs=100):
+def estimate_hr_and_waveform(df, fs=100, return_window_info=False):
     """
     Research Grade Algorithm
     
@@ -248,78 +248,117 @@ def estimate_hr_and_waveform(df, fs=100):
     window_samples = int(WINDOW_SEC * fs)
     step_samples = int(OVERLAP_SEC * fs)
     step_sec = step_samples / fs
-    
-    hr_times = [] # 実時間 (UNIX Time Float)
-    hr_values = [] # 推定された心拍数（BPM）を格納するリスト
-    
+
+    hr_times = []
+    hr_values = []
+    window_records = []
+
     last_valid_bpm = None
     time_since_last_valid = 0.0
-    
-    debug_counts = {"Tracking": 0, "Reset": 0, "Lost": 0, "HarmonicFix": 0}
+
+    debug_counts = {
+        "Tracking": 0,
+        "Reset": 0,
+        "Lost": 0,
+        "HarmonicFix": 0,
+    }
+
+    def append_window_record(start_index, center_index, hr_bpm, status):
+        end_index = start_index + window_samples - 1
+        window_start = df['RecvJST'].iloc[start_index]
+        window_end = (
+            df['RecvJST'].iloc[end_index]
+            + pd.Timedelta(seconds=1.0 / fs)
+        )
+        window_center = df['RecvJST'].iloc[center_index]
+        success = status in {"Tracked", "Reset"}
+
+        window_records.append({
+            "Window_Start": window_start,
+            "Window_End": window_end,
+            "Window_Center": window_center,
+            "HR_BPM_Window": hr_bpm if success else np.nan,
+            "HR_Status": status,
+            "HR_Estimation_Success": success,
+        })
 
     # --- 2. FFT解析ループ ---
     for i in range(0, N - window_samples + 1, step_samples):
-        segment = raw_sig[i : i + window_samples]
+        segment = raw_sig[i:i + window_samples]
         segment_detrend = detrend(segment)
-        
+
         window_func = get_window('hann', len(segment_detrend))
         segment_windowed = segment_detrend * window_func
-        
-        # FFT（元コードと完全一致: ゼロパディングしない）
+
         fft_spectrum = np.fft.rfft(segment_windowed)
-        fft_freqs = np.fft.rfftfreq(len(segment_windowed), d=1/fs)
+        fft_freqs = np.fft.rfftfreq(len(segment_windowed), d=1 / fs)
         fft_mag = np.abs(fft_spectrum)
-        
-        roi_idx = np.where((fft_freqs >= FREQ_MIN) & (fft_freqs <= FREQ_MAX))[0]
-        
-        # 【改善4】 時間軸の記録 (ウィンドウ中心時刻)
+
+        roi_idx = np.where(
+            (fft_freqs >= FREQ_MIN)
+            & (fft_freqs <= FREQ_MAX)
+        )[0]
+
         center_idx = i + window_samples // 2
         center_time = timestamps_float[center_idx]
         hr_times.append(center_time)
 
         if len(roi_idx) == 0:
             hr_values.append(np.nan)
+            debug_counts["Lost"] += 1
+            append_window_record(i, center_idx, np.nan, "Lost")
             continue
 
-        # --- ピーク検出 (with Width Constraint for Q-factor) ---
         mag_roi = fft_mag[roi_idx]
         freqs_roi = fft_freqs[roi_idx]
-        
-        # width制限: 鋭いピークのみ候補にする
-        max_width_samples = int(MAX_PEAK_WIDTH_HZ / (fs/window_samples)) # Hz -> bins
-        peak_idxs_local, props = find_peaks(mag_roi, height=0, width=(None, max_width_samples))
-        
+
+        max_width_samples = int(
+            MAX_PEAK_WIDTH_HZ / (fs / window_samples)
+        )
+        peak_idxs_local, props = find_peaks(
+            mag_roi,
+            height=0,
+            width=(None, max_width_samples),
+        )
+
         if len(peak_idxs_local) == 0:
-            # 鋭いピークがないなら、条件を緩めて再トライ（完全にロストするよりマシ）
             peak_idxs_local, props = find_peaks(mag_roi, height=0)
             if len(peak_idxs_local) == 0:
                 hr_values.append(np.nan)
                 time_since_last_valid += step_sec
+                debug_counts["Lost"] += 1
+                append_window_record(i, center_idx, np.nan, "Lost")
                 continue
-            
+
         candidate_freqs = freqs_roi[peak_idxs_local]
         candidate_bpms = candidate_freqs * 60.0
         candidate_mags = mag_roi[peak_idxs_local]
-        
+
         selected_bpm = None
         selection_mode = "Global"
-        
-        # 1. トラッキングモード ±20BPM
-        if (last_valid_bpm is not None) and (time_since_last_valid < LOST_RESET_SEC):
+
+        if (
+            last_valid_bpm is not None
+            and time_since_last_valid < LOST_RESET_SEC
+        ):
             min_bpm = last_valid_bpm - SEARCH_WINDOW_BPM
             max_bpm = last_valid_bpm + SEARCH_WINDOW_BPM
-            mask_track = (candidate_bpms >= min_bpm) & (candidate_bpms <= max_bpm)
-            
+            mask_track = (
+                (candidate_bpms >= min_bpm)
+                & (candidate_bpms <= max_bpm)
+            )
+
             if np.any(mask_track):
                 inds_track = np.where(mask_track)[0]
-                best_idx_local = inds_track[np.argmax(candidate_mags[inds_track])]
+                best_idx_local = inds_track[
+                    np.argmax(candidate_mags[inds_track])
+                ]
                 selected_bpm = candidate_bpms[best_idx_local]
                 selected_mag = candidate_mags[best_idx_local]
                 selection_mode = "Tracking"
             else:
                 selected_bpm = None
-        
-        # 2. グローバルサーチ
+
         if selected_bpm is None:
             best_idx_global = np.argmax(candidate_mags)
             selected_bpm = candidate_bpms[best_idx_global]
@@ -348,90 +387,140 @@ def estimate_hr_and_waveform(df, fs=100):
         #             selected_bpm = candidate_bpms[sub_best_idx]
         #             selected_mag = sub_mag
         #             debug_counts["HarmonicFix"] += 1
-                    # モードは維持（TrackingならTrackingのまま修正）
+        # モードは維持（TrackingならTrackingのまま修正）
 
-        # --- 最終判定 (Ratio Check) ---
         is_valid = True
         other_mags = candidate_mags[candidate_mags != selected_mag]
-        
+
         if len(other_mags) > 0:
             second_max = np.max(other_mags)
             if selected_mag < PEAK_RATIO_TH * second_max:
                 is_valid = False
-        
+
         if is_valid:
             hr_values.append(selected_bpm)
             last_valid_bpm = selected_bpm
             time_since_last_valid = 0.0
-            
-            if selection_mode == "Tracking": debug_counts["Tracking"] += 1
-            else: debug_counts["Reset"] += 1
+
+            if selection_mode == "Tracking":
+                debug_counts["Tracking"] += 1
+                hr_status = "Tracked"
+            else:
+                debug_counts["Reset"] += 1
+                hr_status = "Reset"
+
+            append_window_record(
+                i,
+                center_idx,
+                float(selected_bpm),
+                hr_status,
+            )
         else:
             hr_values.append(np.nan)
             time_since_last_valid += step_sec
             debug_counts["Lost"] += 1
+            append_window_record(i, center_idx, np.nan, "Lost")
 
-    print(f"  [Debug] Tracked: {debug_counts['Tracking']}, Reset: {debug_counts['Reset']}, Lost: {debug_counts['Lost']}, HarmonicFix: {debug_counts['HarmonicFix']}")
+    print(
+        f"  [Debug] Tracked: {debug_counts['Tracking']}, "
+        f"Reset: {debug_counts['Reset']}, "
+        f"Lost: {debug_counts['Lost']}, "
+        f"HarmonicFix: {debug_counts['HarmonicFix']}"
+    )
 
-    # --- 3. 【改善4】 時間軸ベースの補間 ---
+    # --- 3. 時間軸ベースの補間 ---
     hr_times = np.array(hr_times)
     hr_values = np.array(hr_values)
     valid_mask = ~np.isnan(hr_values)
-    
-    # 全期間のタイムスタンプ配列を作成
     full_times = timestamps_float
-    
+
     if np.sum(valid_mask) > 1:
         f_interp = interp1d(
-            hr_times[valid_mask], 
-            hr_values[valid_mask], 
-            kind='linear', 
-            bounds_error=False, 
-            fill_value="extrapolate"
+            hr_times[valid_mask],
+            hr_values[valid_mask],
+            kind='linear',
+            bounds_error=False,
+            fill_value="extrapolate",
         )
         hr_output_full = f_interp(full_times)
-        hr_output_full = np.clip(hr_output_full, 30, 220) # Clip範囲も拡大
+        hr_output_full = np.clip(hr_output_full, 30, 220)
     else:
         hr_output_full = np.full(N, np.nan)
 
+    window_df = pd.DataFrame(
+        window_records,
+        columns=[
+            "Window_Start",
+            "Window_End",
+            "Window_Center",
+            "HR_BPM_Window",
+            "HR_Status",
+            "HR_Estimation_Success",
+        ],
+    )
+
+    if return_window_info:
+        return hr_output_full, window_df
+
     return hr_output_full
 
-def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0, analysis_duration_sec=0):
+def process_ppg_to_hr(
+    uploaded_files,
+    has_log,
+    interval_min,
+    analysis_start_offset_sec=0,
+    analysis_duration_sec=0,
+):
     try:
         raw_filename = resolve_ppg_raw_file(uploaded_files)
         df = load_ppg_raw_csv(uploaded_files[raw_filename])
 
-        # 旧版 load_ppg_raw_csv との互換用。修正版では RecvJST は列として返る。
+        # 旧版 load_ppg_raw_csv との互換用．
         if "RecvJST" not in df.columns:
             df = df.reset_index().rename(columns={"index": "RecvJST"})
 
-        # PPG→HR変換は，読み込んだ全区間を対象とする
+        # PPG→HR変換は，読み込んだ全区間を対象とする．
         if len(df) < 2:
             raise ValueError("解析対象データが不足しています")
 
-        # Fs 推定（元コードと同じく、先頭1000点の RecvJST 差分から推定）
-        mean_dt = df["RecvJST"].head(1000).diff().dt.total_seconds().mean()
-        estimated_fs = round(1 / mean_dt) if pd.notna(mean_dt) and mean_dt > 0 else 100
+        # Fs推定．
+        mean_dt = (
+            df["RecvJST"]
+            .head(1000)
+            .diff()
+            .dt.total_seconds()
+            .mean()
+        )
+        estimated_fs = (
+            round(1 / mean_dt)
+            if pd.notna(mean_dt) and mean_dt > 0
+            else 100
+        )
 
-        # 注意: HR推定前に IR/RED を ffill/bfill しない。
-        # 元コードは estimate_hr_and_waveform() 内で IR の NaN だけ平均値補完する。
-
-        # 全体相関係数
+        # 全体相関係数．
         overall_corr = df["IR_Value"].corr(df["RED_Value"])
 
-        # 移動相関係数
+        # 移動相関係数．
         window_size = int(estimated_fs * 1.0)
         if window_size < 1:
             window_size = 1
-        df["Rolling_Corr"] = df["IR_Value"].rolling(window=window_size).corr(df["RED_Value"])
 
-        # HR 推定
-        hr_bpm = estimate_hr_and_waveform(df, fs=estimated_fs)
+        df["Rolling_Corr"] = (
+            df["IR_Value"]
+            .rolling(window=window_size)
+            .corr(df["RED_Value"])
+        )
+
+        # 既存のPPG→HR処理のみを実行する．
+        hr_bpm = estimate_hr_and_waveform(
+            df,
+            fs=estimated_fs,
+        )
+
         df["HR_BPM"] = hr_bpm
-
-        # ダウンロード用CSV
         output_df = df.copy()
-        csv_text = output_df.to_csv(index=False)
+        hr_csv_text = output_df.to_csv(index=False)
+        base_name = raw_filename.rsplit(".", 1)[0]
 
         return {
             "analysis_type": "ppg_to_hr",
@@ -443,20 +532,21 @@ def process_ppg_to_hr(uploaded_files, has_log, interval_min, analysis_start_offs
                     None
                     if pd.isna(overall_corr)
                     else float(overall_corr)
-                )
+                ),
             },
             "download": {
-                "filename": f"{raw_filename.rsplit('.', 1)[0]}_HR.csv",
-                "csv_text": csv_text
-            }
+                "filename": f"{base_name}_HR.csv",
+                "csv_text": hr_csv_text,
+            },
         }
 
-    except Exception as e:
+    except Exception as error:
         return {
             "analysis_type": "ppg_to_hr",
             "status": "error",
-            "message": f"PPG→HR変換エラー: {str(e)}"
+            "message": f"PPG→HR変換エラー: {str(error)}",
         }
+
     
 def perform_ppg_wave_hrv_analysis(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0, analysis_duration_sec=0):
     try:

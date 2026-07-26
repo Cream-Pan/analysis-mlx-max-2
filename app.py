@@ -12,6 +12,7 @@ from services.common import (
 from services.mlx_service import process_mlx_common
 from services.max_service import perform_max_evaluation
 from services.ppg_service import process_ppg_to_hr, perform_ppg_hr_comparison, perform_ppg_wave_hrv_analysis
+from services.ppg_acc_service import perform_ppg_acc_analysis
 
 app = Flask(__name__)
 CORS(app)
@@ -116,6 +117,17 @@ def upload_files():
         elif atype == 'ppg_to_hr':
             results.append(
                 process_ppg_to_hr(
+                    uploaded_files,
+                    has_log,
+                    interval_min,
+                    analysis_start_offset_sec,
+                    analysis_duration_sec
+                )
+            )
+
+        elif atype == 'ppg_acc_analysis':
+            results.append(
+                perform_ppg_acc_analysis(
                     uploaded_files,
                     has_log,
                     interval_min,

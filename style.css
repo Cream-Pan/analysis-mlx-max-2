@@ -181,3 +181,23 @@ button:hover {
 .file-chart-scroll canvas{
   max-width:none!important;
 }
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 0.8em;
+}
+
+.result-item table.ppg-acc-table {
+  min-width: 1800px;
+  table-layout: auto;
+}
+
+.result-item table.ppg-acc-table th,
+.result-item table.ppg-acc-table td,
+.result-item table.ppg-acc-table th:first-child,
+.result-item table.ppg-acc-table td:first-child {
+  width: auto;
+  min-width: 110px;
+  white-space: nowrap;
+}
