@@ -796,10 +796,6 @@ def perform_ppg_acc_analysis(
             "fin_fs": int(fin_fs),
             "ear_fs": int(ear_fs),
             "data": _json_records(summary_df),
-            "summary_download": {
-                "filename": "PPG_ACC_Task_Summary.csv",
-                "csv_text": summary_df.to_csv(index=False),
-            },
             "detail_download": {
                 "filename": "PPG_ACC_Window_Detail.csv",
                 "csv_text": detail_df.to_csv(index=False),

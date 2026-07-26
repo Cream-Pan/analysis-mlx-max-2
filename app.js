@@ -316,41 +316,143 @@ document.addEventListener('DOMContentLoaded', async () => {
     // -----------------------------
     window.saveResultsAsPng = saveResultsAsPng;
 
-    function saveResultsAsPng(elementId) {
+    async function saveResultsAsPng(elementId) {
         const element = document.getElementById(elementId);
 
         if (!element) {
-            alert(`エラー: ID "${elementId}" の要素が見つかりません。`);
+            alert(
+                `エラー: ID "${elementId}" の要素が見つかりません．`
+            );
             return;
         }
 
-        html2canvas(element, {
-            scale: 2,
-            useCORS: true,
-            allowTaint: true,
-            ignoreElements: (el) =>
-                el.tagName === 'BUTTON' && el.textContent === 'PNG保存'
-        }).then(canvas => {
+        const scrollAreas = Array.from(
+            element.querySelectorAll('.table-scroll')
+        );
+
+        const scrollAreaWidths = scrollAreas.map(
+            area => area.scrollWidth
+        );
+
+        const originalElementStyle = {
+            width: element.style.width,
+            maxWidth: element.style.maxWidth
+        };
+
+        const originalScrollStyles = scrollAreas.map(area => ({
+            overflow: area.style.overflow,
+            width: area.style.width,
+            maxWidth: area.style.maxWidth
+        }));
+
+        try {
+            scrollAreas.forEach((area, index) => {
+                area.style.overflow = 'visible';
+                area.style.width =
+                    `${scrollAreaWidths[index]}px`;
+                area.style.maxWidth = 'none';
+            });
+
+            const captureWidth = Math.max(
+                element.clientWidth,
+                element.scrollWidth,
+                ...scrollAreaWidths
+            );
+
+            element.style.width = `${captureWidth}px`;
+            element.style.maxWidth = 'none';
+
+            const canvas = await html2canvas(
+                element,
+                {
+                    scale: 2,
+                    useCORS: true,
+                    allowTaint: true,
+                    backgroundColor: '#ffffff',
+                    width: captureWidth,
+                    windowWidth: captureWidth,
+
+                    ignoreElements: elementToCheck => {
+                        return (
+                            elementToCheck.tagName === 'BUTTON'
+                            || elementToCheck.classList?.contains(
+                                'screenshot-exclude'
+                            )
+                            || elementToCheck.hasAttribute?.(
+                                'data-html2canvas-ignore'
+                            )
+                        );
+                    }
+                }
+            );
+
             const dataURL = canvas.toDataURL('image/png');
+
             const a = document.createElement('a');
             a.href = dataURL;
-            a.download = `${elementId}_${new Date().toISOString().slice(0, 10)}.png`;
+            a.download =
+                `${elementId}_${new Date()
+                    .toISOString()
+                    .slice(0, 10)}.png`;
+
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-        }).catch(err => {
-            console.error('PNG保存中にエラーが発生しました:', err);
-            alert(`PNG保存エラーが発生しました: ${err.message}`);
-        });
+
+        } catch (error) {
+            console.error(
+                'PNG保存中にエラーが発生しました:',
+                error
+            );
+
+            alert(
+                `PNG保存エラーが発生しました: ${error.message}`
+            );
+
+        } finally {
+            element.style.width =
+                originalElementStyle.width;
+
+            element.style.maxWidth =
+                originalElementStyle.maxWidth;
+
+            scrollAreas.forEach((area, index) => {
+                const original =
+                    originalScrollStyles[index];
+
+                area.style.overflow =
+                    original.overflow;
+
+                area.style.width =
+                    original.width;
+
+                area.style.maxWidth =
+                    original.maxWidth;
+            });
+        }
     }
 
     function downloadCsvText(filename, csvText) {
-        const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+        const bom = '\uFEFF';
+        const originalText = String(csvText ?? '');
+
+        const csvWithBom = originalText.startsWith(bom)
+            ? originalText
+            : bom + originalText;
+
+        const blob = new Blob(
+            [csvWithBom],
+            {
+                type: 'text/csv;charset=utf-8;'
+            }
+        );
+
         const url = URL.createObjectURL(blob);
 
         const a = document.createElement('a');
         a.href = url;
         a.download = filename;
+
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -411,16 +513,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <button class="download-hr-csv-btn">
                     HR CSVダウンロード
                 </button>
-
-                ${
-                    result.quality_download
-                        ? `
-                            <button class="download-quality-csv-btn">
-                                Quality CSVダウンロード
-                            </button>
-                        `
-                        : ''
-                }
             </div>
         `;
 
@@ -439,22 +531,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 );
             });
         }
-
-        const qualityDownloadButton = resultEl.querySelector(
-            '.download-quality-csv-btn'
-        );
-
-        if (
-            qualityDownloadButton &&
-            result.quality_download
-        ) {
-            qualityDownloadButton.addEventListener('click', () => {
-                downloadCsvText(
-                    result.quality_download.filename,
-                    result.quality_download.csv_text
-                );
-            });
-        }
     }
 
     function formatPpgAccValue(
@@ -463,25 +539,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         suffix = ''
     ) {
         if (
-            value === null ||
-            value === undefined ||
-            value === ''
+            value === null
+            || value === undefined
+            || value === ''
         ) {
             return '―';
         }
 
-        const numeric = Number(value);
+        const numericValue = Number(value);
 
-        if (!Number.isFinite(numeric)) {
+        if (!Number.isFinite(numericValue)) {
             return '―';
         }
 
-        return `${numeric.toFixed(digits)}${suffix}`;
+        return `${numericValue.toFixed(digits)}${suffix}`;
     }
+
+
+    /*
+    * PPG解析と同じ色分けを使用する．
+    * 5 bpm以下は緑，5 bpm超は赤．
+    */
+    function formatPpgAccErrorMetric(value) {
+        if (
+            value === null
+            || value === undefined
+            || value === ''
+        ) {
+            return '―';
+        }
+
+        const numericValue = Number(value);
+
+        if (!Number.isFinite(numericValue)) {
+            return '―';
+        }
+
+        return formatMaxMetric(numericValue);
+    }
+
 
     function displayPpgAccAnalysis(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
+
+        const uniqueId =
+            `ppg-acc-analysis-${Date.now()}-`
+            + Math.random().toString(36).slice(2, 7);
+
+        resultEl.id = uniqueId;
 
         let html = `
             <h3>
@@ -509,10 +615,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             <p>
                 Fin：
                 <b>${result.fin_filename || '不明'}</b>
+                （${result.fin_fs ?? '―'} Hz）
                 <br>
 
                 耳たぶ：
                 <b>${result.ear_filename || '不明'}</b>
+                （${result.ear_fs ?? '―'} Hz）
             </p>
 
             <div class="table-scroll">
@@ -521,24 +629,39 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <tr>
                             <th>タスク名</th>
 
-                            <th>Fin全窓数</th>
-                            <th>Fin Lost率</th>
-                            <th>Fin Motion Artifact率</th>
-                            <th>Fin HR利用可能率</th>
-
-                            <th>耳たぶ全窓数</th>
-                            <th>耳たぶ Lost率</th>
-                            <th>耳たぶ Motion Artifact率</th>
-                            <th>耳たぶ HR利用可能率</th>
+                            <th class="metric-column">MAE</th>
+                            <th class="metric-column">RMSE</th>
+                            <th class="metric-column">Bias</th>
+                            <th>評価判定</th>
 
                             <th>有効ペア窓数</th>
                             <th>有効ペア窓率</th>
 
-                            <th>MAE</th>
-                            <th>RMSE</th>
-                            <th>Bias</th>
+                            <th class="quality-column">
+                                Fin全窓数
+                            </th>
+                            <th class="quality-column">
+                                Fin Lost率
+                            </th>
+                            <th class="quality-column">
+                                Fin Motion Artifact率
+                            </th>
+                            <th class="quality-column">
+                                Fin HR利用可能率
+                            </th>
 
-                            <th>評価判定</th>
+                            <th class="quality-column">
+                                耳たぶ全窓数
+                            </th>
+                            <th class="quality-column">
+                                耳たぶ Lost率
+                            </th>
+                            <th class="quality-column">
+                                耳たぶ Motion Artifact率
+                            </th>
+                            <th class="quality-column">
+                                耳たぶ HR利用可能率
+                            </th>
                         </tr>
                     </thead>
 
@@ -552,60 +675,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                         ${row.Task_Name ?? '―'}
                     </td>
 
-                    <td>
-                        ${row.Fin_Total_Window_Count ?? 0}
+                    <td class="metric-cell">
+                        ${formatPpgAccErrorMetric(
+                            row.MAE
+                        )}
                     </td>
 
-                    <td>
+                    <td class="metric-cell">
+                        ${formatPpgAccErrorMetric(
+                            row.RMSE
+                        )}
+                    </td>
+
+                    <td class="metric-cell">
                         ${formatPpgAccValue(
-                            row.Fin_Lost_Rate,
-                            1,
-                            ' %'
+                            row.Bias,
+                            4
                         )}
                     </td>
 
                     <td>
-                        ${formatPpgAccValue(
-                            row.Fin_Motion_Artifact_Rate,
-                            1,
-                            ' %'
-                        )}
-                    </td>
-
-                    <td>
-                        ${formatPpgAccValue(
-                            row.Fin_HR_Usable_Rate,
-                            1,
-                            ' %'
-                        )}
-                    </td>
-
-                    <td>
-                        ${row.Ear_Total_Window_Count ?? 0}
-                    </td>
-
-                    <td>
-                        ${formatPpgAccValue(
-                            row.Ear_Lost_Rate,
-                            1,
-                            ' %'
-                        )}
-                    </td>
-
-                    <td>
-                        ${formatPpgAccValue(
-                            row.Ear_Motion_Artifact_Rate,
-                            1,
-                            ' %'
-                        )}
-                    </td>
-
-                    <td>
-                        ${formatPpgAccValue(
-                            row.Ear_HR_Usable_Rate,
-                            1,
-                            ' %'
-                        )}
+                        ${row.Evaluation ?? '―'}
                     </td>
 
                     <td>
@@ -620,29 +710,66 @@ document.addEventListener('DOMContentLoaded', async () => {
                         )}
                     </td>
 
-                    <td>
+                    <td class="quality-cell">
+                        ${
+                            row.Fin_Total_Window_Count
+                            ?? 0
+                        }
+                    </td>
+
+                    <td class="quality-cell">
                         ${formatPpgAccValue(
-                            row.MAE,
-                            3
+                            row.Fin_Lost_Rate,
+                            1,
+                            ' %'
                         )}
                     </td>
 
-                    <td>
+                    <td class="quality-cell">
                         ${formatPpgAccValue(
-                            row.RMSE,
-                            3
+                            row.Fin_Motion_Artifact_Rate,
+                            1,
+                            ' %'
                         )}
                     </td>
 
-                    <td>
+                    <td class="quality-cell">
                         ${formatPpgAccValue(
-                            row.Bias,
-                            3
+                            row.Fin_HR_Usable_Rate,
+                            1,
+                            ' %'
                         )}
                     </td>
 
-                    <td>
-                        ${row.Evaluation ?? '―'}
+                    <td class="quality-cell">
+                        ${
+                            row.Ear_Total_Window_Count
+                            ?? 0
+                        }
+                    </td>
+
+                    <td class="quality-cell">
+                        ${formatPpgAccValue(
+                            row.Ear_Lost_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td class="quality-cell">
+                        ${formatPpgAccValue(
+                            row.Ear_Motion_Artifact_Rate,
+                            1,
+                            ' %'
+                        )}
+                    </td>
+
+                    <td class="quality-cell">
+                        ${formatPpgAccValue(
+                            row.Ear_HR_Usable_Rate,
+                            1,
+                            ' %'
+                        )}
                     </td>
                 </tr>
             `;
@@ -663,18 +790,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </table>
             </div>
 
-            <div style="text-align: right; margin-top: 10px;">
-                ${
-                    result.summary_download
-                        ? `
-                            <button
-                                class="download-ppg-acc-summary-btn"
-                            >
-                                タスク集計CSVダウンロード
-                            </button>
-                        `
-                        : ''
-                }
+            <div
+                class="result-actions screenshot-exclude"
+                data-html2canvas-ignore="true"
+            >
+                <button class="save-ppg-acc-png-btn">PNG保存</button>
 
                 ${
                     result.detail_download
@@ -693,36 +813,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         resultEl.innerHTML = html;
         resultDiv.appendChild(resultEl);
 
-        const summaryButton = resultEl.querySelector(
-            '.download-ppg-acc-summary-btn'
+        const screenshotButton = resultEl.querySelector(
+            '.save-ppg-acc-png-btn'
         );
 
-        if (
-            summaryButton &&
-            result.summary_download
-        ) {
-            summaryButton.addEventListener('click', () => {
-                downloadCsvText(
-                    result.summary_download.filename,
-                    result.summary_download.csv_text
-                );
-            });
-        }
+        screenshotButton?.addEventListener(
+            'click',
+            () => {
+                saveResultsAsPng(uniqueId);
+            }
+        );
 
         const detailButton = resultEl.querySelector(
             '.download-ppg-acc-detail-btn'
         );
 
         if (
-            detailButton &&
-            result.detail_download
+            detailButton
+            && result.detail_download
         ) {
-            detailButton.addEventListener('click', () => {
-                downloadCsvText(
-                    result.detail_download.filename,
-                    result.detail_download.csv_text
-                );
-            });
+            detailButton.addEventListener(
+                'click',
+                () => {
+                    downloadCsvText(
+                        result.detail_download.filename,
+                        result.detail_download.csv_text
+                    );
+                }
+            );
         }
     }
 
@@ -779,10 +897,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
         html += `
-            <div style="text-align: right; margin-top: 10px;">
-                <button onclick="saveResultsAsPng('${uniqueId}')">
-                    PNG保存
-                </button>
+            <div class="result-actions screenshot-exclude" data-html2canvas-ignore="true">
+                <button onclick="saveResultsAsPng('${uniqueId}')">PNG保存</button>
             </div>
         `;
 

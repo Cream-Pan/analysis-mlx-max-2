@@ -201,3 +201,30 @@ button:hover {
   min-width: 110px;
   white-space: nowrap;
 }
+
+.result-actions {
+  text-align: right;
+  margin-top: 10px;
+}
+
+.ppg-acc-table .metric-column,
+.ppg-acc-table .metric-cell {
+  text-align: left;
+  min-width: 90px;
+}
+
+.ppg-acc-table .quality-column,
+.ppg-acc-table .quality-cell {
+  text-align: right;
+  min-width: 120px;
+}
+
+.ppg-acc-table th:first-child,
+.ppg-acc-table td:first-child {
+  text-align: left;
+  min-width: 230px;
+}
+
+.ppg-acc-table td {
+  vertical-align: middle;
+}
