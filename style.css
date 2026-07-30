@@ -228,3 +228,24 @@ button:hover {
 .ppg-acc-table td {
   vertical-align: middle;
 }
+
+.column-selector {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 10px 0;
+    padding: 10px;
+
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.column-selector label {
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.column-selector input {
+    margin-right: 4px;
+}

@@ -380,6 +380,10 @@ def _build_preview_sheet(
         "sheet_name": sheet_name,
         "row_count": row_count,
         "column_count": column_count,
+         "columns": [
+            str(col)
+            for col in df.columns
+        ],
         "series": series_list,
         "errors": errors,
         "tasks": tasks if tasks else []
@@ -393,6 +397,8 @@ def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", pr
         lower_filename = filename.lower()
 
         try:
+            if lower_filename.endswith('_log.csv'):
+                continue
             if lower_filename.endswith(('.xlsx', '.xls')):
                 excel_sheets = pd.read_excel(
                     io.BytesIO(file_obj.read()),
@@ -430,27 +436,41 @@ def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", pr
                 )
                 time_values = None
 
-                if has_log and preview_axis == "time":
-                    recv_col = None
+                if preview_axis == "time":
+                    time_col = None
+
                     for col in df.columns:
-                        if "RecvJST" in str(col):
-                            recv_col = col
+                        col_name = str(col)
+                        if (
+                            "RecvJST" in col_name
+                            or
+                            "sampling_time" in col_name.lower()
+                        ):
+                            time_col = col
                             break
 
-                    if recv_col is not None:
-                        base_time = get_log_start_time(
-                            uploaded_files
-                        )
+                    if time_col is not None:
+                        if "sampling_time" in str(time_col).lower():
+                            dt = (
+                                df[time_col]
+                                .apply(parse_datetime_or_duration)
+                            )
+                            base_time = dt.iloc[0]
+                            time_values = (
+                                dt - base_time
+                            ).dt.total_seconds().tolist()
 
-                        recv_time = (
-                            df[recv_col]
-                            .apply(parse_datetime_or_duration)
-                        )
-
-                        time_values = (
-                            recv_time -
-                            base_time
-                        ).dt.total_seconds().tolist()
+                        else:
+                            base_time = get_log_start_time(
+                                uploaded_files
+                            )
+                            dt = (
+                                df[time_col]
+                                .apply(parse_datetime_or_duration)
+                            )
+                            time_values = (
+                                dt - base_time
+                            ).dt.total_seconds().tolist()
 
                 tasks = []
                 if has_log:

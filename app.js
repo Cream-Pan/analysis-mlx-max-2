@@ -949,6 +949,60 @@ document.addEventListener('DOMContentLoaded', async () => {
         return `<span style="color: red; font-weight: bold;">${text}</span>`;
     }
 
+    function updateChartScrollWidth(chart) {
+        const canvas = chart.canvas;
+        const wrapper =
+            canvas.closest(
+                '.file-chart-inner'
+            );
+        if (!wrapper) {
+            return;
+        }
+
+        const xScale =
+            chart.scales.x;
+
+        const visibleRange =
+            xScale.max - xScale.min;
+
+        const originalRange =
+            chart.options.scales.x
+                .max -
+            chart.options.scales.x
+                .min;
+
+        if (
+            !Number.isFinite(visibleRange)
+            ||
+            !Number.isFinite(originalRange)
+        ) {
+            return;
+        }
+
+        const zoomRatio =
+            originalRange /
+            visibleRange;
+
+        const baseWidth =
+            wrapper.dataset.baseWidth
+            ?
+            Number(wrapper.dataset.baseWidth)
+            :
+            wrapper.clientWidth;
+
+        wrapper.dataset.baseWidth =
+            baseWidth;
+
+        const newWidth =
+            Math.max(
+                900,
+                baseWidth * zoomRatio
+            );
+
+        wrapper.style.width =
+            `${newWidth}px`;
+    }
+
     function displayFilePreview(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
@@ -1004,11 +1058,48 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             file.sheets.forEach((sheet, sheetIndex) => {
-                if (sheet.sheet_name) {
+                let columnSelector = null;
+                if (sheet.series && sheet.series.length > 0) {
                     const sheetTitle = document.createElement('h5');
                     sheetTitle.className = 'file-chart-sheet-title';
                     sheetTitle.textContent = `シート: ${sheet.sheet_name}`;
                     resultEl.appendChild(sheetTitle);
+
+                    // 表示列切替チェックボックス
+                    columnSelector = document.createElement('div');
+                    columnSelector.className = 'column-selector';
+
+                    const selectorTitle = document.createElement('b');
+                    selectorTitle.textContent = '表示列: ';
+                    columnSelector.appendChild(selectorTitle);
+
+                    sheet.series.forEach((series, index) => {
+
+                        const label = document.createElement('label');
+
+                        const checkbox = document.createElement('input');
+
+                        checkbox.type = 'checkbox';
+                        checkbox.checked = true;
+
+                        checkbox.dataset.datasetIndex = index;
+
+                        const columnName =
+                            sheet.columns?.[series.column_number - 1]
+                            ?? `${series.column_number}列目`;
+
+                        label.appendChild(checkbox);
+
+                        label.appendChild(
+                            document.createTextNode(
+                                columnName
+                            )
+                        );
+
+                        columnSelector.appendChild(label);
+                    });
+
+                    resultEl.appendChild(columnSelector);
                 }
 
                 if (Array.isArray(sheet.errors)) {
@@ -1051,6 +1142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const chartInner = document.createElement('div');
                 chartInner.className = 'file-chart-inner';
                 chartInner.style.width = `${chartWidth}px`;
+                chartInner.dataset.baseWidth =chartWidth;
 
                 const canvas = document.createElement('canvas');
                 canvas.width = chartWidth;
@@ -1081,7 +1173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         spanGaps: false
                     };
                 });
-
+                const chartInstance =
                 new Chart(canvas.getContext('2d'), {
                     type: 'line',
 
@@ -1161,21 +1253,64 @@ document.addEventListener('DOMContentLoaded', async () => {
                             zoom:{
                                 zoom:{
                                     wheel:{
-                                    enabled:true
+                                        enabled:true
                                     },
                                     pinch:{
-                                    enabled:true
+                                        enabled:true
                                     },
-                                    mode:"x"
+                                    mode:"x",
+
+                                    onZoomComplete({
+                                        chart
+                                    }) {
+                                        updateChartScrollWidth(chart);
+                                    }
                                 },
+
                                 pan:{
-                                enabled:true,
-                                mode:"x"
+                                    enabled:true,
+                                    mode:"x",
+
+                                    onPanComplete({
+                                        chart
+                                    }) {
+                                        updateChartScrollWidth(chart);
+                                    }
                                 }
                             }
                         }
                     }
                 });
+                // 列表示ON/OFF
+                if (columnSelector) {
+                    const columnCheckboxes =
+                        columnSelector.querySelectorAll(
+                            'input[type="checkbox"]'
+                        );
+
+                    columnCheckboxes.forEach(
+                        checkbox => {
+
+                            checkbox.addEventListener(
+                                'change',
+                                () => {
+
+                                    const index =
+                                        Number(
+                                            checkbox.dataset.datasetIndex
+                                        );
+
+                                    chartInstance.data.datasets[index]
+                                        .hidden =
+                                        !checkbox.checked;
+
+                                    chartInstance.update();
+                                }
+                            );
+
+                        }
+                    );
+                }
             });
         });
     }
