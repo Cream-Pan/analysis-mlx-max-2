@@ -96,6 +96,27 @@ def get_log_start_time(uploaded_files):
         start_rows.iloc[0]["Timestamp"]
     )
 
+def get_log_end_time(uploaded_files):
+
+    log_filename = resolve_log_file(
+        uploaded_files
+    )
+
+    df_log = pd.read_csv(
+        io.BytesIO(
+            uploaded_files[log_filename].read()
+        )
+    )
+
+    uploaded_files[log_filename].seek(0)
+
+    df_log["Timestamp_dt"] = (
+        df_log["Timestamp"]
+        .apply(parse_datetime_or_duration)
+    )
+
+    return df_log["Timestamp_dt"].max()
+
 # ----------------------------------------
 # 汎用: 時刻 or 持続時間の柔軟パーサ
 # ----------------------------------------
@@ -252,23 +273,17 @@ def load_preview_tasks(uploaded_files, has_log, interval_min=5, start_time=None,
     start_time = get_log_start_time(uploaded_files)
 
     return [
-        {
-        "name":row["Task_Name"],
-        "start":
-        (
-            row["Timestamp_dt"]
-            -
-            start_time
-        ).total_seconds(),
+    {
+    "name":row["Task_Name"],
 
-        "end":
-        (
-            row["End_Time"]
-            -
-            start_time
-        ).total_seconds()
-        }
-        for _,row in df_log.iterrows()
+    "start":
+    row["Timestamp_dt"].isoformat(),
+
+    "end":
+    row["End_Time"].isoformat()
+
+    }
+    for _,row in df_log.iterrows()
     ]
 
 
@@ -287,15 +302,90 @@ def load_body_temp(file_obj):
 
     return df.dropna(subset=['dt', 'temp']).set_index('dt').sort_index()
 
+def build_x_axis(df, log_start_time=None):
+
+    columns = [
+        str(c)
+        for c in df.columns
+    ]
+
+    # RecvJST + SensorElapsed_ms
+    if (
+        "RecvJST" in columns
+        and
+        "SensorElapsed_ms" in columns
+    ):
+
+        recv_time = (
+            df["RecvJST"]
+            .apply(parse_datetime_or_duration)
+        )
+
+        elapsed = pd.to_numeric(
+            df["SensorElapsed_ms"],
+            errors="coerce"
+        )
+
+        base_time = recv_time.iloc[0]
+        base_elapsed = elapsed.iloc[0]
+
+        x_values = [
+            (
+                base_time
+                +
+                pd.Timedelta(
+                    milliseconds=value-base_elapsed
+                )
+            ).isoformat()
+
+            for value in elapsed
+        ]
+
+
+        return (
+            x_values,
+            "datetime",
+            pd.Series(x_values)
+        )
+
+    # sampling_time
+    sampling_col = None
+
+    for c in columns:
+        if "sampling_time" in c.lower():
+            sampling_col = c
+            break
+
+
+    if sampling_col:
+
+        values = pd.to_numeric(
+            df[sampling_col],
+            errors="coerce"
+        )
+
+        return (
+            values.tolist(),
+            "sampling"
+        )
+
+
+    # 行番号
+    return (
+        list(range(1,len(df)+1)),
+        "index"
+    )
+
 
 def _build_preview_sheet(
     df,
     sheet_name,
     column_numbers,
-    preview_axis="index",
     preview_scale="same",
-    time_values=None,
-    tasks=None
+    x_values=None,
+    x_type="index",
+    tasks=None,
+    log_start_time=None
 ):
     series_list = []
     errors = []
@@ -360,10 +450,7 @@ def _build_preview_sheet(
 
         points = []
         for index, value in enumerate(values):
-            if preview_axis == "time" and time_values is not None:
-                x = float(time_values[index])
-            else:
-                x = index + 1
+            x = x_values[index]
 
             points.append({
                 "x": x,
@@ -380,6 +467,7 @@ def _build_preview_sheet(
         "sheet_name": sheet_name,
         "row_count": row_count,
         "column_count": column_count,
+        "x_type": x_type,
          "columns": [
             str(col)
             for col in df.columns
@@ -420,9 +508,9 @@ def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", pr
                             df,
                             sheet_name,
                             column_numbers,
-                            preview_axis,
                             preview_scale,
-                            time_values,
+                            x_values,
+                            x_type,
                             tasks
                         )
                         for sheet_name, df in excel_sheets.items()
@@ -434,43 +522,19 @@ def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", pr
                     io.BytesIO(file_obj.read()),
                     low_memory=False
                 )
-                time_values = None
 
-                if preview_axis == "time":
-                    time_col = None
+                x_values, x_type, datetime_values = build_x_axis(
+                    df,
+                    get_log_start_time(uploaded_files)
+                    if has_log
+                    else None
+                )
 
-                    for col in df.columns:
-                        col_name = str(col)
-                        if (
-                            "RecvJST" in col_name
-                            or
-                            "sampling_time" in col_name.lower()
-                        ):
-                            time_col = col
-                            break
-
-                    if time_col is not None:
-                        if "sampling_time" in str(time_col).lower():
-                            dt = (
-                                df[time_col]
-                                .apply(parse_datetime_or_duration)
-                            )
-                            base_time = dt.iloc[0]
-                            time_values = (
-                                dt - base_time
-                            ).dt.total_seconds().tolist()
-
-                        else:
-                            base_time = get_log_start_time(
-                                uploaded_files
-                            )
-                            dt = (
-                                df[time_col]
-                                .apply(parse_datetime_or_duration)
-                            )
-                            time_values = (
-                                dt - base_time
-                            ).dt.total_seconds().tolist()
+                if x_type == "datetime":
+                    df["x_datetime"] = pd.to_datetime(
+                        datetime_values,
+                        format="mixed"
+                    )
 
                 tasks = []
                 if has_log:
@@ -478,6 +542,29 @@ def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", pr
                         uploaded_files,
                         True
                     )
+                    if has_log:
+                        log_start = get_log_start_time(
+                            uploaded_files
+                        )
+                        log_end = get_log_end_time(
+                            uploaded_files
+                        )
+
+                        mask = (
+                            (df["x_datetime"] >= log_start)
+                            &
+                            (df["x_datetime"] <= log_end)
+                        )
+
+                        df = df.loc[mask].reset_index(drop=True)
+                        x_values = [
+                            x
+                            for x, keep in zip(
+                                x_values,
+                                mask
+                            )
+                            if keep
+                        ]
                 else:
                     if preview_axis == "time" and time_values is not None:
 
@@ -509,10 +596,13 @@ def perform_file_preview(uploaded_files, column_numbers,preview_axis="index", pr
                             df,
                             None,
                             column_numbers,
-                            preview_axis,
                             preview_scale,
-                            time_values,
-                            tasks
+                            x_values,
+                            x_type,
+                            tasks,
+                            get_log_start_time(uploaded_files)
+                            if has_log
+                            else None
                         )
                     ]
                 })

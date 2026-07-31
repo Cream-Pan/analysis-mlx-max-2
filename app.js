@@ -12,9 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const durationWrapper = document.getElementById('analysis-duration-wrapper');
     const previewColumnsWrapper = document.getElementById('preview-columns-wrapper');
     const previewColumnsInput = document.getElementById('previewColumns');
-    const previewAxis = document.getElementById('previewAxis');
     const previewScale = document.getElementById('previewScale');
-    const previewAxisWrapper = document.getElementById('preview-axis-wrapper');
     const previewScaleWrapper = document.getElementById('preview-scale-wrapper');
     const submitButton = uploadForm.querySelector('button[type="submit"]');
     
@@ -268,11 +266,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         setVisible(
             previewColumnsWrapper,
-            visible
-        );
-
-        setVisible(
-            previewAxisWrapper,
             visible
         );
 
@@ -1060,10 +1053,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             file.sheets.forEach((sheet, sheetIndex) => {
                 let columnSelector = null;
                 if (sheet.series && sheet.series.length > 0) {
-                    const sheetTitle = document.createElement('h5');
-                    sheetTitle.className = 'file-chart-sheet-title';
-                    sheetTitle.textContent = `シート: ${sheet.sheet_name}`;
-                    resultEl.appendChild(sheetTitle);
+                    if (sheet.sheet_name) {
+                        const sheetTitle = document.createElement('h5');
+                        sheetTitle.className = 'file-chart-sheet-title';
+                        sheetTitle.textContent =
+                            `シート: ${sheet.sheet_name}`;
+                        resultEl.appendChild(sheetTitle);
+                    }
 
                     // 表示列切替チェックボックス
                     columnSelector = document.createElement('div');
@@ -1161,7 +1157,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         data:
                         series.points.map(
                             point=>({
-                                x:point.x,
+                                x:
+                                sheet.x_type === "datetime"
+                                ?
+                                new Date(point.x)
+                                :
+                                point.x,
                                 y:point.y
                             })
                         ),
@@ -1194,14 +1195,52 @@ document.addEventListener('DOMContentLoaded', async () => {
                         },
 
                         scales: {
-                            x: {
-                                type: 'linear',
-                                title: {
-                                    display: true,
-                                    text:
-                                    (sheet.tasks.length > 0 && previewAxis.value==="time")
+                            x:{
+                                type:"time",
+
+                                min:
+                                sheet.tasks.length > 0
+                                ?
+                                new Date(sheet.tasks[0].start)
+                                :
+                                undefined,
+
+                                max:
+                                sheet.tasks.length > 0
+                                ?
+                                new Date(
+                                    sheet.tasks[
+                                        sheet.tasks.length-1
+                                    ].end
+                                )
+                                :
+                                undefined,
+
+                                max:
+                                    sheet.tasks.length > 0
                                     ?
-                                    "時間[s]"
+                                    sheet.tasks[
+                                        sheet.tasks.length-1
+                                    ].end
+                                    :
+                                    undefined,
+
+                                time:{
+                                    displayFormats:{
+                                        minute:"HH:mm",
+                                        second:"mm:ss"
+                                    }
+                                },
+                                title:{
+                                    display:true,
+                                    text:
+                                    sheet.x_type === "datetime"
+                                    ?
+                                    "時刻"
+                                    :
+                                    sheet.x_type === "sampling"
+                                    ?
+                                    "sampling_time"
                                     :
                                     "行番号"
                                 },
@@ -1210,10 +1249,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 }
                             },
 
-                            y: {
-                                title: {
-                                    display: true,
-                                    text: '値'
+                            y:{
+                                title:{
+                                    display:true,
+                                    text:
+                                    sheet.columns?.[
+                                        sheet.series[0].column_number-1
+                                    ]
+                                    ?? "値"
                                 }
                             }
                         },
@@ -1230,8 +1273,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                                                 {
                                                     type:"box",
 
-                                                    xMin:task.start,
-                                                    xMax:task.end,
+                                                    xMin:new Date(task.start),
+                                                    xMax:new Date(task.end),
 
                                                     backgroundColor:
                                                     "rgba(100,100,100,0.08)",
@@ -1513,17 +1556,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 String(columnNumber)
             );
         });
-
-        if(selectedType === "show_files"){
-            formData.append(
-                "preview_axis",
-                previewAxis.value
-            );
-            formData.append(
-                "preview_scale",
-                previewScale.value
-            );
-        }
 
         for (const file of fileInput.files) {
             formData.append('files', file);
