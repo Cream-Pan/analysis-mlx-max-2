@@ -1,6 +1,5 @@
 # PPG＋ACC解析：ローデータ＋ログから共通時刻窓を生成する版
 # 入力：Fin生データCSV，耳たぶ生データCSV，ログCSV
-# Quality CSVは使用しない
 # 10 s窓，5 s間隔をログのタスク開始時刻から共通生成する
 
 import io
@@ -8,7 +7,13 @@ import re
 
 import numpy as np
 import pandas as pd
-from scipy.signal import coherence, detrend, find_peaks, get_window
+from scipy.signal import (
+    coherence,
+    detrend,
+    find_peaks,
+    get_window,
+    welch,
+)
 
 from services.common import config, load_log_tasks
 from services.ppg_service import load_ppg_raw_csv
@@ -21,16 +26,13 @@ FREQ_MAX_HZ = 3.0
 FREQ_DIFF_THRESHOLD_HZ = 0.1
 COHERENCE_THRESHOLD = 0.8
 TASK_EVALUABLE_THRESHOLD = 50.0
-
 # 10 s窓のうち，最低80 %のサンプルがある場合にFFT解析する．
 MIN_SAMPLE_RATIO = 0.8
-
 # 現行HR推定ロジックの設定値．
 SEARCH_WINDOW_BPM = 25.0
 LOST_RESET_SEC = 5.0
 PEAK_RATIO_THRESHOLD = 1.0
 MAX_PEAK_WIDTH_HZ = 0.8
-
 
 DETAIL_COLUMNS = [
     "Task_Name",
@@ -43,9 +45,19 @@ DETAIL_COLUMNS = [
     "Fin_HR_BPM_Window",
     "Fin_HR_Status",
     "Fin_HR_Estimation_Success",
+    # 既存列：Motion Artifact判定に使用する周波数．
+    # HR推定成功時はHR採用周波数，失敗時はPPG PSDピーク周波数となる．
     "Fin_PPG_Peak_Hz",
     "Fin_ACC_Peak_Hz",
     "Fin_Peak_Diff_Hz",
+    # 追加列：PSDピークとHR採用周波数を明示的に分離する．
+    "Fin_HR_Selected_Hz",
+    "Fin_PPG_PSD_Peak_Hz",
+    "Fin_PPG_PSD_Peak_Value",
+    "Fin_ACC_PSD_Peak_Hz",
+    "Fin_ACC_PSD_Peak_Value",
+    "Fin_PPG_ACC_PSD_Diff_Hz",
+    "Fin_PPG_PSD_HR_Diff_Hz",
     "Fin_Coherence_At_ACC_Peak",
     "Fin_Motion_Artifact",
     "Fin_HR_Usable",
@@ -57,6 +69,13 @@ DETAIL_COLUMNS = [
     "Ear_PPG_Peak_Hz",
     "Ear_ACC_Peak_Hz",
     "Ear_Peak_Diff_Hz",
+    "Ear_HR_Selected_Hz",
+    "Ear_PPG_PSD_Peak_Hz",
+    "Ear_PPG_PSD_Peak_Value",
+    "Ear_ACC_PSD_Peak_Hz",
+    "Ear_ACC_PSD_Peak_Value",
+    "Ear_PPG_ACC_PSD_Diff_Hz",
+    "Ear_PPG_PSD_HR_Diff_Hz",
     "Ear_Coherence_At_ACC_Peak",
     "Ear_Motion_Artifact",
     "Ear_HR_Usable",
@@ -90,7 +109,6 @@ def _estimate_sampling_frequency(df):
 
     if pd.isna(mean_dt) or mean_dt <= 0:
         return 100
-
     return max(1, int(round(1.0 / mean_dt)))
 
 
@@ -111,7 +129,6 @@ def _resolve_raw_files(uploaded_files):
     for filename, file_obj in uploaded_files.items():
         if not filename.lower().endswith(".csv"):
             continue
-
         if re.search(r"_log\.csv$", filename, flags=re.IGNORECASE):
             continue
 
@@ -145,7 +162,6 @@ def _resolve_raw_files(uploaded_files):
             "FinのPPG生データCSVを1つ指定してください．"
             f"候補: {detail}"
         )
-
     if len(ear_candidates) != 1:
         detail = ", ".join(ear_candidates) if ear_candidates else "なし"
         raise ValueError(
@@ -164,7 +180,6 @@ def _create_task_windows(tasks):
     タスク境界をまたぐ窓は作らない．
     """
     windows = []
-
     for task in tasks:
         task_start = pd.Timestamp(task["Start_Time"])
         task_end = pd.Timestamp(task["End_Time"])
@@ -177,7 +192,6 @@ def _create_task_windows(tasks):
             window_center = window_start + pd.Timedelta(
                 seconds=WINDOW_SEC / 2.0
             )
-
             windows.append({
                 "Task_Name": task["Task_Name"],
                 "Window_Number": window_number,
@@ -192,31 +206,67 @@ def _create_task_windows(tasks):
     return windows
 
 
-def _dominant_frequency(values, fs):
-    arr = _fill_nan(values)
+def _psd_peak(values, fs):
+    """
+    0.8～3.0 Hzの範囲でWelch PSDを計算し，
+    PSDが最大となる周波数とPSD値を返す．
 
+    npersegは10 s，オーバーラップは5 sを基本とする．
+    データが10 s未満の場合は，利用可能な全サンプルを用いる．
+    """
+    arr = _fill_nan(values)
     if (
         arr is None
-        or len(arr) < 2
+        or len(arr) < 8
         or fs <= 0
         or np.std(arr) <= 0
     ):
-        return np.nan
+        return np.nan, np.nan
 
     arr = detrend(arr)
-    arr = arr * get_window("hann", len(arr))
+    nperseg = min(
+        len(arr),
+        max(8, int(round(WINDOW_SEC * fs))),
+    )
+    step_samples = max(1, int(round(STEP_SEC * fs)))
+    noverlap = max(0, nperseg - step_samples)
+    noverlap = min(noverlap, nperseg - 1)
 
-    spectrum = np.abs(np.fft.rfft(arr))
-    freqs = np.fft.rfftfreq(len(arr), d=1.0 / fs)
+    try:
+        freqs, psd = welch(
+            arr,
+            fs=fs,
+            window="hann",
+            nperseg=nperseg,
+            noverlap=noverlap,
+            detrend=False,
+            scaling="density",
+        )
+    except Exception:
+        return np.nan, np.nan
+
     mask = (
         (freqs >= FREQ_MIN_HZ)
         & (freqs <= FREQ_MAX_HZ)
+        & np.isfinite(psd)
+    )
+    if not np.any(mask):
+        return np.nan, np.nan
+
+    masked_freqs = freqs[mask]
+    masked_psd = psd[mask]
+    peak_index = int(np.argmax(masked_psd))
+
+    return (
+        float(masked_freqs[peak_index]),
+        float(masked_psd[peak_index]),
     )
 
-    if not np.any(mask):
-        return np.nan
 
-    return float(freqs[mask][np.argmax(spectrum[mask])])
+def _dominant_frequency(values, fs):
+    """後方互換用．PSD最大周波数のみ返す．"""
+    peak_hz, _ = _psd_peak(values, fs)
+    return peak_hz
 
 
 def _coherence_at_frequency(ppg_values, acc_values, fs, target_hz):
@@ -241,7 +291,6 @@ def _coherence_at_frequency(ppg_values, acc_values, fs, target_hz):
 
     ppg = detrend(ppg)
     acc = detrend(acc)
-
     nperseg = min(
         max(8, int(round(5.0 * fs))),
         length,
@@ -283,6 +332,13 @@ def _lost_hr_result(sample_count, data_sufficient):
         "PPG_Peak_Hz": np.nan,
         "ACC_Peak_Hz": np.nan,
         "Peak_Diff_Hz": np.nan,
+        "HR_Selected_Hz": np.nan,
+        "PPG_PSD_Peak_Hz": np.nan,
+        "PPG_PSD_Peak_Value": np.nan,
+        "ACC_PSD_Peak_Hz": np.nan,
+        "ACC_PSD_Peak_Value": np.nan,
+        "PPG_ACC_PSD_Diff_Hz": np.nan,
+        "PPG_PSD_HR_Diff_Hz": np.nan,
         "Coherence_At_ACC_Peak": np.nan,
         "Motion_Artifact": False,
         "HR_Usable": False,
@@ -309,7 +365,6 @@ def _estimate_hr_for_window(ppg_values, fs, state):
         segment_detrended
         * get_window("hann", len(segment_detrended))
     )
-
     fft_spectrum = np.fft.rfft(windowed)
     fft_freqs = np.fft.rfftfreq(
         len(windowed),
@@ -328,7 +383,6 @@ def _estimate_hr_for_window(ppg_values, fs, state):
 
     magnitude_roi = fft_magnitude[roi_indices]
     frequency_roi = fft_freqs[roi_indices]
-
     frequency_resolution = fs / len(windowed)
     max_width_samples = max(
         1,
@@ -346,7 +400,6 @@ def _estimate_hr_for_window(ppg_values, fs, state):
             magnitude_roi,
             height=0,
         )
-
     if len(peak_indices) == 0:
         state["time_since_last_valid"] += STEP_SEC
         return np.nan, "Lost", False
@@ -358,7 +411,6 @@ def _estimate_hr_for_window(ppg_values, fs, state):
     selected_bpm = None
     selected_index = None
     selection_mode = "Reset"
-
     if (
         state["last_valid_bpm"] is not None
         and state["time_since_last_valid"] < LOST_RESET_SEC
@@ -375,7 +427,6 @@ def _estimate_hr_for_window(ppg_values, fs, state):
             (candidate_bpms >= minimum_bpm)
             & (candidate_bpms <= maximum_bpm)
         )
-
         if np.any(tracking_mask):
             tracking_indices = np.where(tracking_mask)[0]
             selected_index = tracking_indices[
@@ -396,7 +447,6 @@ def _estimate_hr_for_window(ppg_values, fs, state):
         candidate_magnitudes,
         selected_index,
     )
-
     is_valid = True
     if len(other_magnitudes) > 0:
         second_maximum = np.max(other_magnitudes)
@@ -413,8 +463,13 @@ def _estimate_hr_for_window(ppg_values, fs, state):
     selected_bpm = float(selected_bpm)
     state["last_valid_bpm"] = selected_bpm
     state["time_since_last_valid"] = 0.0
-
     return selected_bpm, selection_mode, True
+
+
+def _absolute_difference(first, second):
+    if not (np.isfinite(first) and np.isfinite(second)):
+        return np.nan
+    return float(abs(first - second))
 
 
 def _analyze_device_window(
@@ -428,7 +483,6 @@ def _analyze_device_window(
         (df["RecvJST"] >= window_start)
         & (df["RecvJST"] < window_end)
     ].copy()
-
     sample_count = len(window_df)
     expected_samples = max(
         1,
@@ -459,25 +513,41 @@ def _analyze_device_window(
         fs,
         state,
     )
-
-    # Motion Artifact判定では，実際にHRとして採用した周波数を使用する．
-    ppg_peak_hz = (
+    hr_selected_hz = (
         float(hr_bpm / 60.0)
         if hr_success and np.isfinite(hr_bpm)
-        else _dominant_frequency(ppg_values, fs)
+        else np.nan
     )
-    acc_peak_hz = _dominant_frequency(
+
+    ppg_psd_peak_hz, ppg_psd_peak_value = _psd_peak(
+        ppg_values,
+        fs,
+    )
+    acc_psd_peak_hz, acc_psd_peak_value = _psd_peak(
         acceleration_magnitude,
         fs,
     )
 
-    peak_diff_hz = (
-        float(abs(ppg_peak_hz - acc_peak_hz))
-        if (
-            np.isfinite(ppg_peak_hz)
-            and np.isfinite(acc_peak_hz)
-        )
-        else np.nan
+    # 既存のMotion Artifact判定は維持する．
+    # HR推定成功時は実際に採用した周波数をPPG側の比較周波数とする．
+    ppg_peak_hz = (
+        hr_selected_hz
+        if np.isfinite(hr_selected_hz)
+        else ppg_psd_peak_hz
+    )
+    acc_peak_hz = acc_psd_peak_hz
+    peak_diff_hz = _absolute_difference(
+        ppg_peak_hz,
+        acc_peak_hz,
+    )
+
+    ppg_acc_psd_diff_hz = _absolute_difference(
+        ppg_psd_peak_hz,
+        acc_psd_peak_hz,
+    )
+    ppg_psd_hr_diff_hz = _absolute_difference(
+        ppg_psd_peak_hz,
+        hr_selected_hz,
     )
 
     coherence_value = _coherence_at_frequency(
@@ -495,7 +565,6 @@ def _analyze_device_window(
         np.isfinite(coherence_value)
         and coherence_value >= COHERENCE_THRESHOLD
     )
-
     motion_artifact = bool(
         hr_success
         and frequency_match
@@ -519,6 +588,13 @@ def _analyze_device_window(
         "PPG_Peak_Hz": ppg_peak_hz,
         "ACC_Peak_Hz": acc_peak_hz,
         "Peak_Diff_Hz": peak_diff_hz,
+        "HR_Selected_Hz": hr_selected_hz,
+        "PPG_PSD_Peak_Hz": ppg_psd_peak_hz,
+        "PPG_PSD_Peak_Value": ppg_psd_peak_value,
+        "ACC_PSD_Peak_Hz": acc_psd_peak_hz,
+        "ACC_PSD_Peak_Value": acc_psd_peak_value,
+        "PPG_ACC_PSD_Diff_Hz": ppg_acc_psd_diff_hz,
+        "PPG_PSD_HR_Diff_Hz": ppg_psd_hr_diff_hz,
         "Coherence_At_ACC_Peak": coherence_value,
         "Motion_Artifact": motion_artifact,
         "HR_Usable": hr_usable,
@@ -539,9 +615,16 @@ def _safe_rate(count, total):
     return float(count / total * 100.0)
 
 
+def _finite_median(series):
+    values = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    values = values[np.isfinite(values)]
+    if len(values) == 0:
+        return None
+    return float(np.median(values))
+
+
 def _summarize_device(task_df, prefix):
     total = int(len(task_df))
-
     tracked_count = int(
         (task_df[f"{prefix}_HR_Status"] == "Tracked").sum()
     )
@@ -582,6 +665,62 @@ def _summarize_device(task_df, prefix):
             usable_count,
             total,
         ),
+        f"{prefix}_HR_Selected_Hz_Median": _finite_median(
+            task_df[f"{prefix}_HR_Selected_Hz"]
+        ),
+    }
+
+
+def _task_frequency_summary(raw_df, fs, task, task_df, prefix):
+    """タスク全体のPPG・ACC Welch PSDとHR採用周波数を集約する．"""
+    task_start = pd.Timestamp(task["Start_Time"])
+    task_end = pd.Timestamp(task["End_Time"])
+    raw_task_df = raw_df[
+        (raw_df["RecvJST"] >= task_start)
+        & (raw_df["RecvJST"] < task_end)
+    ].copy()
+
+    if raw_task_df.empty:
+        ppg_peak_hz = np.nan
+        ppg_peak_value = np.nan
+        acc_peak_hz = np.nan
+        acc_peak_value = np.nan
+    else:
+        ppg_values = raw_task_df["IR_Value"].to_numpy(dtype=float)
+        acceleration_magnitude = np.sqrt(
+            raw_task_df["Accel_X_mg"].to_numpy(dtype=float) ** 2
+            + raw_task_df["Accel_Y_mg"].to_numpy(dtype=float) ** 2
+            + raw_task_df["Accel_Z_mg"].to_numpy(dtype=float) ** 2
+        )
+        ppg_peak_hz, ppg_peak_value = _psd_peak(ppg_values, fs)
+        acc_peak_hz, acc_peak_value = _psd_peak(
+            acceleration_magnitude,
+            fs,
+        )
+
+    hr_selected_hz_median = _finite_median(
+        task_df[f"{prefix}_HR_Selected_Hz"]
+    )
+    ppg_acc_diff = _absolute_difference(
+        ppg_peak_hz,
+        acc_peak_hz,
+    )
+    ppg_hr_diff = _absolute_difference(
+        ppg_peak_hz,
+        (
+            hr_selected_hz_median
+            if hr_selected_hz_median is not None
+            else np.nan
+        ),
+    )
+
+    return {
+        f"{prefix}_Task_PPG_PSD_Peak_Hz": ppg_peak_hz,
+        f"{prefix}_Task_PPG_PSD_Peak_Value": ppg_peak_value,
+        f"{prefix}_Task_ACC_PSD_Peak_Hz": acc_peak_hz,
+        f"{prefix}_Task_ACC_PSD_Peak_Value": acc_peak_value,
+        f"{prefix}_Task_PPG_ACC_PSD_Diff_Hz": ppg_acc_diff,
+        f"{prefix}_Task_PPG_PSD_HR_Diff_Hz": ppg_hr_diff,
     }
 
 
@@ -600,7 +739,6 @@ def _json_records(df):
                 converted[key] = value.item()
             else:
                 converted[key] = value
-
         records.append(converted)
 
     return records
@@ -626,7 +764,6 @@ def perform_ppg_acc_analysis(
         fin_filename, ear_filename = _resolve_raw_files(
             uploaded_files
         )
-
         fin_df = load_ppg_raw_csv(
             uploaded_files[fin_filename]
         )
@@ -641,7 +778,6 @@ def perform_ppg_acc_analysis(
 
         fin_fs = _estimate_sampling_frequency(fin_df)
         ear_fs = _estimate_sampling_frequency(ear_df)
-
         base_day = min(
             fin_df["RecvJST"].min(),
             ear_df["RecvJST"].min(),
@@ -672,7 +808,6 @@ def perform_ppg_acc_analysis(
         }
 
         detail_rows = []
-
         for window in common_windows:
             fin_result = _analyze_device_window(
                 fin_df,
@@ -688,7 +823,6 @@ def perform_ppg_acc_analysis(
                 window["Window_End"],
                 ear_state,
             )
-
             pair_usable = bool(
                 fin_result["HR_Usable"]
                 and ear_result["HR_Usable"]
@@ -703,7 +837,6 @@ def perform_ppg_acc_analysis(
                 if pair_usable
                 else np.nan
             )
-
             detail_rows.append({
                 **window,
                 **_prefix_result(fin_result, "Fin"),
@@ -718,7 +851,6 @@ def perform_ppg_acc_analysis(
         )
 
         summary_rows = []
-
         for task in tasks:
             task_name = task["Task_Name"]
             task_df = detail_df[
@@ -730,6 +862,20 @@ def perform_ppg_acc_analysis(
                 "Fin",
             )
             ear_summary = _summarize_device(
+                task_df,
+                "Ear",
+            )
+            fin_frequency_summary = _task_frequency_summary(
+                fin_df,
+                fin_fs,
+                task,
+                task_df,
+                "Fin",
+            )
+            ear_frequency_summary = _task_frequency_summary(
+                ear_df,
+                ear_fs,
+                task,
                 task_df,
                 "Ear",
             )
@@ -750,7 +896,6 @@ def perform_ppg_acc_analysis(
             mae = None
             rmse = None
             bias = None
-
             if task_evaluable and valid_pair_count > 0:
                 errors = valid_pairs[
                     "Error_BPM"
@@ -772,7 +917,9 @@ def perform_ppg_acc_analysis(
             summary_rows.append({
                 "Task_Name": task_name,
                 **fin_summary,
+                **fin_frequency_summary,
                 **ear_summary,
+                **ear_frequency_summary,
                 "Valid_Pair_Count": valid_pair_count,
                 "Valid_Pair_Rate": _safe_rate(
                     valid_pair_count,
@@ -786,7 +933,6 @@ def perform_ppg_acc_analysis(
             })
 
         summary_df = pd.DataFrame(summary_rows)
-
         return {
             "analysis_type": "ppg_acc_analysis",
             "status": "success",
@@ -796,12 +942,15 @@ def perform_ppg_acc_analysis(
             "fin_fs": int(fin_fs),
             "ear_fs": int(ear_fs),
             "data": _json_records(summary_df),
+            "summary_download": {
+                "filename": "PPG_ACC_Task_Summary.csv",
+                "csv_text": summary_df.to_csv(index=False),
+            },
             "detail_download": {
                 "filename": "PPG_ACC_Window_Detail.csv",
                 "csv_text": detail_df.to_csv(index=False),
             },
         }
-
     except Exception as error:
         return {
             "analysis_type": "ppg_acc_analysis",

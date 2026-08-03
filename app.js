@@ -572,6 +572,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
 
+    function formatPpgAccPsdPeak(frequency, psdValue) {
+        const frequencyText = formatPpgAccValue(
+            frequency,
+            3,
+            ' Hz'
+        );
+
+        if (
+            psdValue === null
+            || psdValue === undefined
+            || psdValue === ''
+        ) {
+            return `${frequencyText}<br><small>PSD：―</small>`;
+        }
+
+        const numericPsd = Number(psdValue);
+        const psdText = Number.isFinite(numericPsd)
+            ? numericPsd.toExponential(3)
+            : '―';
+
+        return `${frequencyText}<br><small>PSD：${psdText}</small>`;
+    }
+
+
     function displayPpgAccAnalysis(result) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
@@ -725,7 +749,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                             ' %'
                         )}
                     </td>
-
                     <td class="quality-cell">
                         ${formatPpgAccValue(
                             row.Fin_HR_Usable_Rate,
@@ -740,7 +763,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                             ?? 0
                         }
                     </td>
-
                     <td class="quality-cell">
                         ${formatPpgAccValue(
                             row.Ear_Lost_Rate,
@@ -783,11 +805,134 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </table>
             </div>
 
+            <h4>タスク別PSD・周波数比較</h4>
+            <p style="font-size: 0.9em; color: #555;">
+                PSDは0.8～3.0 Hzを対象に，10 s Hann窓・5 s間隔のWelch法で算出しています．
+                HR採用周波数は，各タスク内でHR推定に成功した10 s窓の中央値です．
+            </p>
+
+            <div class="table-scroll">
+                <table class="ppg-acc-table">
+                    <thead>
+                        <tr>
+                            <th>タスク名</th>
+                            <th>Fin PPG最大PSD</th>
+                            <th>Fin ACC最大PSD</th>
+                            <th>Fin HR採用周波数中央値</th>
+                            <th>Fin 周波数差</th>
+                            <th>耳たぶ PPG最大PSD</th>
+                            <th>耳たぶ ACC最大PSD</th>
+                            <th>耳たぶ HR採用周波数中央値</th>
+                            <th>耳たぶ 周波数差</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        rows.forEach(row => {
+            html += `
+                <tr>
+                    <td>${row.Task_Name ?? '―'}</td>
+                    <td>
+                        ${formatPpgAccPsdPeak(
+                            row.Fin_Task_PPG_PSD_Peak_Hz,
+                            row.Fin_Task_PPG_PSD_Peak_Value
+                        )}
+                    </td>
+                    <td>
+                        ${formatPpgAccPsdPeak(
+                            row.Fin_Task_ACC_PSD_Peak_Hz,
+                            row.Fin_Task_ACC_PSD_Peak_Value
+                        )}
+                    </td>
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Fin_HR_Selected_Hz_Median,
+                            3,
+                            ' Hz'
+                        )}
+                    </td>
+                    <td>
+                        PPG－ACC：${formatPpgAccValue(
+                            row.Fin_Task_PPG_ACC_PSD_Diff_Hz,
+                            3,
+                            ' Hz'
+                        )}
+                        <br>
+                        PPG－HR：${formatPpgAccValue(
+                            row.Fin_Task_PPG_PSD_HR_Diff_Hz,
+                            3,
+                            ' Hz'
+                        )}
+                    </td>
+                    <td>
+                        ${formatPpgAccPsdPeak(
+                            row.Ear_Task_PPG_PSD_Peak_Hz,
+                            row.Ear_Task_PPG_PSD_Peak_Value
+                        )}
+                    </td>
+                    <td>
+                        ${formatPpgAccPsdPeak(
+                            row.Ear_Task_ACC_PSD_Peak_Hz,
+                            row.Ear_Task_ACC_PSD_Peak_Value
+                        )}
+                    </td>
+                    <td>
+                        ${formatPpgAccValue(
+                            row.Ear_HR_Selected_Hz_Median,
+                            3,
+                            ' Hz'
+                        )}
+                    </td>
+                    <td>
+                        PPG－ACC：${formatPpgAccValue(
+                            row.Ear_Task_PPG_ACC_PSD_Diff_Hz,
+                            3,
+                            ' Hz'
+                        )}
+                        <br>
+                        PPG－HR：${formatPpgAccValue(
+                            row.Ear_Task_PPG_PSD_HR_Diff_Hz,
+                            3,
+                            ' Hz'
+                        )}
+                    </td>
+                </tr>
+            `;
+        });
+
+        if (rows.length === 0) {
+            html += `
+                <tr>
+                    <td colspan="9">
+                        表示できるPSD結果がありません．
+                    </td>
+                </tr>
+            `;
+        }
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+
             <div
                 class="result-actions screenshot-exclude"
                 data-html2canvas-ignore="true"
             >
                 <button class="save-ppg-acc-png-btn">PNG保存</button>
+
+                ${
+                    result.summary_download
+                        ? `
+                            <button
+                                class="download-ppg-acc-summary-btn"
+                            >
+                                タスク別結果CSVダウンロード
+                            </button>
+                        `
+                        : ''
+                }
 
                 ${
                     result.detail_download
@@ -817,6 +962,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         );
 
+        const summaryButton = resultEl.querySelector(
+            '.download-ppg-acc-summary-btn'
+        );
+
+        if (
+            summaryButton
+            && result.summary_download
+        ) {
+            summaryButton.addEventListener(
+                'click',
+                () => {
+                    downloadCsvText(
+                        result.summary_download.filename,
+                        result.summary_download.csv_text
+                    );
+                }
+            );
+        }
+
         const detailButton = resultEl.querySelector(
             '.download-ppg-acc-detail-btn'
         );
@@ -836,6 +1000,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             );
         }
     }
+
 
     function displayPpgAnalysis(result) {
         const resultEl = document.createElement('div');
