@@ -1,5 +1,6 @@
 # PPG＋ACC解析：ローデータ＋ログから共通時刻窓を生成する版
 # 入力：Fin生データCSV，耳たぶ生データCSV，ログCSV
+# Quality CSVは使用しない
 # 10 s窓，5 s間隔をログのタスク開始時刻から共通生成する
 
 import io
@@ -264,9 +265,35 @@ def _psd_peak(values, fs):
 
 
 def _dominant_frequency(values, fs):
-    """後方互換用．PSD最大周波数のみ返す．"""
-    peak_hz, _ = _psd_peak(values, fs)
-    return peak_hz
+    """
+    既存のMotion Artifact判定で使用していたFFT振幅最大周波数を返す．
+
+    PSD表示用のWelch法とは分離し，HR使用可能率などの既存指標が
+    PSD追加前から変化しないようにする．
+    """
+    arr = _fill_nan(values)
+    if (
+        arr is None
+        or len(arr) < 2
+        or fs <= 0
+        or np.std(arr) <= 0
+    ):
+        return np.nan
+
+    arr = detrend(arr)
+    arr = arr * get_window("hann", len(arr))
+
+    spectrum = np.abs(np.fft.rfft(arr))
+    freqs = np.fft.rfftfreq(len(arr), d=1.0 / fs)
+    mask = (
+        (freqs >= FREQ_MIN_HZ)
+        & (freqs <= FREQ_MAX_HZ)
+    )
+
+    if not np.any(mask):
+        return np.nan
+
+    return float(freqs[mask][np.argmax(spectrum[mask])])
 
 
 def _coherence_at_frequency(ppg_values, acc_values, fs, target_hz):
@@ -528,14 +555,17 @@ def _analyze_device_window(
         fs,
     )
 
-    # 既存のMotion Artifact判定は維持する．
-    # HR推定成功時は実際に採用した周波数をPPG側の比較周波数とする．
+    # Motion Artifact判定にはPSD追加前と同じFFT振幅ピークを使用する．
+    # Welch PSDのピークは表示・考察用として別に保持する．
     ppg_peak_hz = (
         hr_selected_hz
         if np.isfinite(hr_selected_hz)
-        else ppg_psd_peak_hz
+        else _dominant_frequency(ppg_values, fs)
     )
-    acc_peak_hz = acc_psd_peak_hz
+    acc_peak_hz = _dominant_frequency(
+        acceleration_magnitude,
+        fs,
+    )
     peak_diff_hz = _absolute_difference(
         ppg_peak_hz,
         acc_peak_hz,
