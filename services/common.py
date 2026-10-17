@@ -1,37 +1,223 @@
 import io
 import re
-import json
-import os
 import pandas as pd
+
+from services.settings import config
 
 # ----------------------------------------
 # 共通: 設定とアップロードファイル
 # ----------------------------------------
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
+
+
+def read_uploaded_csv(file_obj, **kwargs):
+    """Read an uploaded CSV and restore its stream position, even on failure."""
+    try:
+        return pd.read_csv(io.BytesIO(file_obj.read()), **kwargs)
+    finally:
+        file_obj.seek(0)
+
+
+def read_uploaded_csv_columns(file_obj):
+    """Return the header columns of an uploaded CSV."""
+    return set(read_uploaded_csv(file_obj, nrows=0).columns)
 
 
 def get_uploaded_files_dict(files):
     return {f.filename: f for f in files}
 
 
+def _config_value(path):
+    value = config
+    for key in str(path).split("."):
+        if not isinstance(value, dict) or key not in value:
+            raise ValueError(f"入力仕様の設定参照が不正です: {path}")
+        value = value[key]
+    return value
+
+
+def _required_columns(spec):
+    if "columns_ref" not in spec:
+        return []
+    columns = _config_value(spec["columns_ref"])
+    if isinstance(columns, dict):
+        return [str(value) for value in columns.values()]
+    if isinstance(columns, (list, tuple)):
+        return [str(value) for value in columns]
+    raise ValueError(f"列名の設定が不正です: {spec['columns_ref']}")
+
+
+def _filename_matches_rule(filename, rule):
+    lower_name = filename.lower()
+    extensions = [value.lower() for value in rule.get("extensions", [])]
+    if extensions and not any(lower_name.endswith(ext) for ext in extensions):
+        return False
+    suffix = rule.get("suffix")
+    if suffix and not lower_name.endswith(suffix.lower()):
+        return False
+    if any(value.lower() not in lower_name for value in rule.get("contains_all", [])):
+        return False
+    contains_any = rule.get("contains_any", [])
+    if contains_any and not any(value.lower() in lower_name for value in contains_any):
+        return False
+    if any(value.lower() in lower_name for value in rule.get("exclude_contains", [])):
+        return False
+    return True
+
+
+def read_uploaded_file_columns(file_obj, filename, sheet_candidates=None):
+    """CSV／Excel の見出しを読み，アップロードストリームを先頭へ戻す．"""
+    try:
+        payload = file_obj.read()
+    finally:
+        file_obj.seek(0)
+
+    lower_name = filename.lower()
+    if lower_name.endswith((".xlsx", ".xls")):
+        workbook = pd.ExcelFile(io.BytesIO(payload))
+        candidates = sheet_candidates or []
+        sheet = next((name for name in candidates if name in workbook.sheet_names), None)
+        if sheet is None:
+            if not workbook.sheet_names:
+                raise ValueError("シートがありません")
+            sheet = workbook.sheet_names[0]
+        columns = pd.read_excel(
+            io.BytesIO(payload), sheet_name=sheet, nrows=0
+        ).columns
+        return set(str(value) for value in columns)
+
+    try:
+        return set(read_uploaded_csv(io.BytesIO(payload), nrows=0).columns.astype(str))
+    except Exception as utf8_error:
+        try:
+            return set(read_uploaded_csv(
+                io.BytesIO(payload), nrows=0, encoding="shift_jis"
+            ).columns.astype(str))
+        except Exception:
+            raise ValueError(f"CSV の見出しを読み取れません: {utf8_error}")
+
+
+def _validate_input_file(filename, file_obj, file_spec):
+    try:
+        sheet_candidates = []
+        if "sheet_candidates_ref" in file_spec:
+            sheet_candidates = _config_value(file_spec["sheet_candidates_ref"])
+        columns = read_uploaded_file_columns(
+            file_obj, filename, sheet_candidates=sheet_candidates
+        )
+    except Exception as error:
+        return f"{filename} の見出しを確認できません: {error}"
+
+    required = _required_columns(file_spec)
+    missing = [name for name in required if name not in columns]
+    if missing:
+        return f"{filename} に必要な列がありません: {', '.join(missing)}"
+
+    min_columns = file_spec.get("min_columns")
+    if min_columns is not None and len(columns) < int(min_columns):
+        return f"{filename} の列数が不足しています（{min_columns} 列以上が必要です）"
+    return None
+
+
 def get_required_files(analysis_type, has_log):
-    required = list(config.get('required_files', {}).get(analysis_type, []))
-    return required
+    input_spec = config.get("input_specs", {}).get(analysis_type, {})
+    return [item["name"] for item in input_spec.get("fixed_files", [])]
 
 
 def validate_required_files(uploaded_files, analysis_type, has_log):
-    required = get_required_files(analysis_type, has_log)
-    missing = [name for name in required if name not in uploaded_files]
+    input_spec = config.get("input_specs", {}).get(analysis_type)
+    if input_spec is None:
+        return False, "未対応の解析タイプです"
+
+    missing = [
+        item["name"] for item in input_spec.get("fixed_files", [])
+        if item["name"] not in uploaded_files
+    ]
     if missing:
         return False, f"必要なファイルが不足しています: {', '.join(missing)}"
+
+    for item in input_spec.get("fixed_files", []):
+        error = _validate_input_file(
+            item["name"], uploaded_files[item["name"]], item
+        )
+        if error:
+            return False, error
+
+    for rule in input_spec.get("file_rules", []):
+        filename_candidates = [
+            name for name in uploaded_files
+            if _filename_matches_rule(name, rule)
+        ]
+        if rule.get("selection") == "columns":
+            candidates = []
+            for name in filename_candidates:
+                try:
+                    sheet_candidates = rule.get("sheet_candidates", [])
+                    if "sheet_candidates_ref" in rule:
+                        sheet_candidates = _config_value(
+                            rule["sheet_candidates_ref"]
+                        )
+                    columns = read_uploaded_file_columns(
+                        uploaded_files[name], name,
+                        sheet_candidates=sheet_candidates
+                    )
+                except Exception:
+                    continue
+                required = _required_columns(rule)
+                if set(required).issubset(columns):
+                    candidates.append(name)
+        else:
+            candidates = filename_candidates
+
+        minimum = int(rule.get("min_count", 0))
+        maximum = rule.get("max_count")
+        if len(candidates) < minimum:
+            required_columns = _required_columns(rule)
+            details = (
+                f"（必要列: {', '.join(required_columns)}）"
+                if required_columns else ""
+            )
+            return False, (
+                f"{rule.get('label', '入力ファイル')}が不足しています．"
+                f"{minimum} 個以上選択してください{details}"
+            )
+        if maximum is not None and len(candidates) > int(maximum):
+            return False, (
+                f"{rule.get('label', '入力ファイル')}は {maximum} 個まで選択してください"
+            )
+
+        for name in candidates:
+            error = _validate_input_file(name, uploaded_files[name], rule)
+            if error:
+                return False, error
+
+    log_policy = input_spec.get("log_policy", "optional")
+    if log_policy == "required" and not has_log:
+        return False, "この解析ではログファイルの使用が必要です"
+    if log_policy == "unused" and has_log:
+        return False, "この解析ではログファイルを使用できません"
     if has_log:
         try:
-            resolve_log_file(uploaded_files)
+            log_filename = resolve_log_file(uploaded_files)
         except ValueError as e:
             return False, str(e)
+        required_log_columns = _config_value(
+            input_spec.get("log_columns_ref", "common_input_columns.log")
+        )
+        try:
+            log_columns = read_uploaded_file_columns(
+                uploaded_files[log_filename], log_filename
+            )
+        except Exception as error:
+            return False, f"ログファイルの見出しを確認できません: {error}"
+        missing_log_columns = [
+            column for column in required_log_columns if column not in log_columns
+        ]
+        if missing_log_columns:
+            return False, (
+                "ログファイルに必要な列がありません: "
+                + ", ".join(missing_log_columns)
+            )
     return True, None
 
 def resolve_log_file(uploaded_files):
@@ -58,19 +244,52 @@ def resolve_log_file(uploaded_files):
         "ログファイル(*_log.csv)が見つかりません"
     )
 
-def get_log_start_time(uploaded_files):
-    log_filename = resolve_log_file(uploaded_files)
-
-    df_log = pd.read_csv(
-        io.BytesIO(uploaded_files[log_filename].read())
-    )
-    uploaded_files[log_filename].seek(0)
-
-    if "Task_Name" not in df_log.columns or "Timestamp" not in df_log.columns:
-        raise ValueError(
+def _read_log_dataframe(uploaded_files, missing_columns_message=None):
+    """ログCSVを読み，必要な列を共通確認する．"""
+    filename = resolve_log_file(uploaded_files)
+    df_log = read_uploaded_csv(uploaded_files[filename])
+    required_columns = {"Task_Name", "Timestamp"}
+    if not required_columns.issubset(df_log.columns):
+        message = missing_columns_message or (
             "ログファイルに必要な列(Task_Name, Timestamp)がありません"
         )
+        raise ValueError(message)
+    return df_log.copy()
 
+
+def _parse_log_timestamps(df_log, base_day=None, invalid="raise"):
+    """ログ時刻を共通パーサで変換する．invalid='coerce' は不正値をNaTにする．"""
+    parsed = df_log.copy()
+    if invalid == "coerce":
+        parsed["Timestamp_dt"] = parsed["Timestamp"].apply(
+            lambda value: _safe_parse_datetime(value, base_day)
+        )
+    elif invalid == "raise":
+        parsed["Timestamp_dt"] = parsed["Timestamp"].apply(
+            lambda value: parse_datetime_or_duration(value, base_day)
+        )
+    else:
+        raise ValueError(f"未対応の時刻エラー処理です: {invalid}")
+    valid_timestamps = parsed["Timestamp_dt"].dropna()
+    duplicate_timestamps = valid_timestamps[
+        valid_timestamps.duplicated(keep=False)
+    ]
+    if not duplicate_timestamps.empty:
+        raise ValueError(
+            "ログファイルに同じ時刻の記録があります: "
+            f"{duplicate_timestamps.iloc[0]}"
+        )
+    return parsed
+
+
+def _sort_log_rows_with_end_time(df_log):
+    """時刻順に並べ，各行へ次の境界時刻を付ける．"""
+    sorted_log = df_log.sort_values("Timestamp_dt").reset_index(drop=True)
+    sorted_log["End_Time"] = sorted_log["Timestamp_dt"].shift(-1)
+    return sorted_log
+
+
+def _find_log_start_row(df_log):
     task_name_clean = (
         df_log["Task_Name"]
         .astype(str)
@@ -78,48 +297,36 @@ def get_log_start_time(uploaded_files):
         .str.strip()
         .str.lower()
     )
-
-
     start_rows = df_log[
-        task_name_clean.str.contains(
-            "ble_start_time|start",
-            regex=True
-        )
+        task_name_clean.str.contains("ble_start_time|start", regex=True)
     ]
+    if start_rows.empty:
+        raise ValueError("BLE_START_TIME (Main) がログファイルにありません")
+    return start_rows.iloc[0]
 
-    if len(start_rows) == 0:
-        raise ValueError(
-            "BLE_START_TIME (Main) がログファイルにありません"
-        )
-
-    return parse_datetime_or_duration(
-        start_rows.iloc[0]["Timestamp"]
-    )
+def get_log_start_time(uploaded_files):
+    df_log = _parse_log_timestamps(_read_log_dataframe(uploaded_files))
+    start_row = _find_log_start_row(df_log)
+    return start_row["Timestamp_dt"]
 
 def get_log_end_time(uploaded_files):
-
-    log_filename = resolve_log_file(
-        uploaded_files
-    )
-
-    df_log = pd.read_csv(
-        io.BytesIO(
-            uploaded_files[log_filename].read()
-        )
-    )
-
-    uploaded_files[log_filename].seek(0)
-
-    df_log["Timestamp_dt"] = (
-        df_log["Timestamp"]
-        .apply(parse_datetime_or_duration)
-    )
-
+    df_log = _parse_log_timestamps(_read_log_dataframe(uploaded_files))
     return df_log["Timestamp_dt"].max()
 
 # ----------------------------------------
 # 汎用: 時刻 or 持続時間の柔軟パーサ
 # ----------------------------------------
+def parse_datetime_series(series):
+    """CSV の日時列を整形して datetime に変換する．"""
+    cleaned = (
+        series.astype(str)
+        .str.strip()
+        .str.replace('="', '', regex=False)
+        .str.replace('"', '', regex=False)
+    )
+    return pd.to_datetime(cleaned, errors="coerce")
+
+
 def parse_datetime_or_duration(value, base_day=None):
     s = str(value).strip().replace('"', '').replace('=', '')
 
@@ -149,18 +356,13 @@ def parse_datetime_or_duration(value, base_day=None):
 # ----------------------------------------
 def load_log_tasks(uploaded_files, has_log, interval_min, start_time_limit, end_time_limit, base_day):
     if has_log:
-        log_filename = resolve_log_file(uploaded_files)
-
-        df_log = pd.read_csv(
-            io.BytesIO(uploaded_files[log_filename].read())
+        df_log = _read_log_dataframe(
+            uploaded_files,
+            missing_columns_message="log.csv に必要な列(Task_Name, Timestamp)がありません",
         )
-        uploaded_files[log_filename].seek(0)
-
-        if 'Task_Name' not in df_log.columns or 'Timestamp' not in df_log.columns:
-            raise ValueError("log.csv に必要な列(Task_Name, Timestamp)がありません")
 
         df_log['Task_Name'] = df_log['Task_Name'].astype(str).str.replace('"', '', regex=False)
-        df_log['Timestamp_dt'] = df_log['Timestamp'].apply(lambda x: parse_datetime_or_duration(x, base_day))
+        df_log = _parse_log_timestamps(df_log, base_day=base_day)
         df_log = df_log.dropna(subset=['Task_Name', 'Timestamp_dt']).sort_values('Timestamp_dt')
 
         # task_names = config.get('task_names', [])
@@ -170,8 +372,7 @@ def load_log_tasks(uploaded_files, has_log, interval_min, start_time_limit, end_
         if len(df_log) < 2:
             raise ValueError("タスク境界が 2 つ未満です")
 
-        df_log = df_log.reset_index(drop=True)
-        df_log['End_Time'] = df_log['Timestamp_dt'].shift(-1)
+        df_log = _sort_log_rows_with_end_time(df_log)
         df_log = df_log.dropna(subset=['End_Time'])
 
         return [
@@ -236,13 +437,7 @@ def load_preview_tasks(uploaded_files, has_log, interval_min=5, start_time=None,
 
         return tasks
 
-    log_filename = resolve_log_file(uploaded_files)
-    df_log = pd.read_csv(
-        io.BytesIO(
-            uploaded_files[log_filename].read()
-        )
-    )
-    uploaded_files[log_filename].seek(0)
+    df_log = _read_log_dataframe(uploaded_files)
 
     df_log["Task_Name"] = (
         df_log["Task_Name"]
@@ -250,27 +445,14 @@ def load_preview_tasks(uploaded_files, has_log, interval_min=5, start_time=None,
         .str.replace('"',"",regex=False)
     )
 
-    df_log["Timestamp_dt"] = (
-        df_log["Timestamp"]
-        .apply(parse_datetime_or_duration)
-    )
+    df_log = _parse_log_timestamps(df_log)
+    _find_log_start_row(df_log)
 
-    df_log = (
-        df_log
-        .sort_values("Timestamp_dt")
-        .reset_index(drop=True)
-    )
-
-    df_log["End_Time"] = (
-        df_log["Timestamp_dt"]
-        .shift(-1)
-    )
+    df_log = _sort_log_rows_with_end_time(df_log)
 
     df_log = df_log.dropna(
         subset=["End_Time"]
     )
-
-    start_time = get_log_start_time(uploaded_files)
 
     return [
     {
@@ -288,14 +470,13 @@ def load_preview_tasks(uploaded_files, has_log, interval_min=5, start_time=None,
 
 
 def load_body_temp(file_obj):
-    df = pd.read_csv(
-        io.BytesIO(file_obj.read()),
+    df = read_uploaded_csv(
+        file_obj,
         header=None,
         skiprows=1,
         usecols=[0, 1],
         names=['temp', 'time']
     )
-    file_obj.seek(0)
 
     df['dt'] = df['time'].apply(lambda x: parse_datetime_or_duration(x))
     df['temp'] = pd.to_numeric(df['temp'], errors='coerce')
@@ -476,17 +657,7 @@ def load_preview_log_range(uploaded_files, base_day=None):
     ログファイル内のStartからEndまでを読み込み，
     描画範囲，タスク区間，x軸に表示する時刻を返す．
     """
-    log_filename = resolve_log_file(uploaded_files)
-    log_file = uploaded_files[log_filename]
-
-    df_log = pd.read_csv(io.BytesIO(log_file.read()))
-    log_file.seek(0)
-
-    required_columns = {"Task_Name", "Timestamp"}
-    if not required_columns.issubset(df_log.columns):
-        raise ValueError(
-            "ログファイルに必要な列(Task_Name, Timestamp)がありません"
-        )
+    df_log = _read_log_dataframe(uploaded_files)
 
     df_log = df_log.copy()
     df_log["Task_Name"] = (
@@ -495,8 +666,8 @@ def load_preview_log_range(uploaded_files, base_day=None):
         .str.replace('"', '', regex=False)
         .str.strip()
     )
-    df_log["Timestamp_dt"] = df_log["Timestamp"].apply(
-        lambda value: _safe_parse_datetime(value, base_day)
+    df_log = _parse_log_timestamps(
+        df_log, base_day=base_day, invalid="coerce"
     )
     df_log = df_log.dropna(
         subset=["Task_Name", "Timestamp_dt"]
@@ -524,10 +695,8 @@ def load_preview_log_range(uploaded_files, base_day=None):
         )
 
     end_index = end_candidates[0]
-    range_rows = (
+    range_rows = _sort_log_rows_with_end_time(
         df_log.loc[start_index:end_index]
-        .sort_values("Timestamp_dt")
-        .reset_index(drop=True)
     )
 
     if len(range_rows) < 2:
@@ -544,15 +713,15 @@ def load_preview_log_range(uploaded_files, base_day=None):
         )
 
     tasks = []
-    for index in range(len(range_rows) - 1):
-        task_start = range_rows.iloc[index]["Timestamp_dt"]
-        task_end = range_rows.iloc[index + 1]["Timestamp_dt"]
+    for _, row in range_rows.dropna(subset=["End_Time"]).iterrows():
+        task_start = row["Timestamp_dt"]
+        task_end = row["End_Time"]
 
         if task_end <= task_start:
             continue
 
         tasks.append({
-            "name": str(range_rows.iloc[index]["Task_Name"]),
+            "name": str(row["Task_Name"]),
             "start": task_start.isoformat(),
             "end": task_end.isoformat()
         })
@@ -848,8 +1017,8 @@ def perform_file_preview(
                 })
 
             elif lower_filename.endswith(".csv"):
-                df = pd.read_csv(
-                    io.BytesIO(file_obj.read()),
+                df = read_uploaded_csv(
+                    file_obj,
                     low_memory=False
                 )
                 prepared = _prepare_preview_dataframe(

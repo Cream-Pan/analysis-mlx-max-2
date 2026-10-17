@@ -91,42 +91,53 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 ------------------------------------------------------------------------
 
 ## 想定する入力ファイル
+各解析モードで受け付ける入力を以下に示す．ログを使用する場合は，`*_log.csv` 形式のログファイルを1つ選択する．ログには `Task_Name` と `Timestamp` の列が必要である．
 
 ### MLX評価
 
--   `body_temperature.csv`
--   `log.csv`（任意）
--   `3-Device_Measurement.xlsx`
--   `MLX_*_Measurement*.csv`
+- `body_temperature.csv`：2列以上
+- `3-Device_Measurement.xlsx` または `mlx` を含む CSV：8列以上
+- ログファイル：任意
 
 ### MLX修正後評価
 
--   `body_temperature.csv`
--   `mlx_re.csv`
--   `log.csv`
+- `body_temperature.csv`：2列以上
+- `mlx_re.csv`：9列以上
+- ログファイル：任意
 
 ### MAX評価
 
--   `ecg.csv`
--   `PPG_BPM.csv`
--   `PPG_fin_BPM.csv`
--   `log.csv`
+- `ecg.csv`：`Timestamp`，`HeartRate_BPM`
+- `PPG_BPM.csv` と `PPG_fin_BPM.csv`：`RecvJST`，`HR_BPM`
+- ログファイル：任意
 
-### PPG＋ACC解析
+### PPG→HR変換
 
--   PPG Quality CSV
--   加速度を含む PPG データ
--   `log.csv`
+- PPG生データ CSV：`RecvJST`，`IR_Value`，`RED_Value`，`Accel_X_mg`，`Accel_Y_mg`，`Accel_Z_mg`，`SensorElapsed_ms`
+- ログファイル：使用しない
+
+### PPG解析
+
+- `*_HR.csv` を2つ以上：各ファイルに `RecvJST`，`HR_BPM`
+- ログファイル：任意
 
 ### PPG脈波解析
 
--   `RecvJST` と `IR_Value` を含む PPG CSV を1つ以上
--   ログなしの場合は，区切り分数と開始オフセットを指定する．解析時間を空欄にすると，各ファイルの末尾まで解析する．
--   ログありの場合は，ログの `Task_Name` と `Timestamp` からタスク区間を作り，各区間の指標を出力する．
+- PPG CSVを1つ以上：各ファイルに `RecvJST`，`IR_Value`
+- ログファイル：任意．使用時はログの `Task_Name` と `Timestamp` からタスク区間を作る．
+- ログを使用しない場合は，区切り分数と開始オフセットを指定する．解析時間を空欄にすると，ファイル末尾まで解析する．
+
+### PPG＋ACC解析
+
+- ファイル名に `fin` を含むFin PPG生データ CSVを1つ
+- ファイル名に `fin` を含まない耳たぶ PPG生データ CSVを1つ
+- 各生データ CSV に `RecvJST`，`IR_Value`，`RED_Value`，`Accel_X_mg`，`Accel_Y_mg`，`Accel_Z_mg`，`SensorElapsed_ms`
+- ログファイル：必須
 
 ### ファイル内容表示
 
-任意の CSV / Excel
+- 表示対象の CSV または Excel：任意
+- ログファイル：タスク境界表示に使う場合のみ必要
 
 ------------------------------------------------------------------------
 
@@ -173,10 +184,39 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 .
 ├── app.py
 ├── app.js
+├── js/
+│   ├── actions/
+│   │   └── file-export.js
+│   ├── charts/
+│   │   └── file-preview.js
+│   └── results/
+│       ├── evaluations.js
+│       ├── ppg-acc-analysis.js
+│       ├── ppg-acc-actions.js
+│       ├── ppg-acc-table-rows.js
+│       ├── ppg-acc-formatters.js
+│       ├── ppg-comparison.js
+│       ├── ppg-to-hr.js
+│       └── ppg-hr-analysis.js
 ├── index.html
 ├── style.css
 ├── config.json
 ├── requirements.txt
+├── services/
+│   ├── __init__.py
+│   ├── settings.py
+│   ├── common.py
+│   ├── mlx_service.py
+│   ├── max_service.py
+│   ├── hr_compare_service.py
+│   ├── ppg_service.py
+│   └── ppg_acc_service.py
+├── tests/
+│   ├── test_input_validation.py
+│   ├── test_regression_basics.py
+│   ├── test_time_log_boundaries.py
+│   ├── test_real_data_regression.py
+│   └── README.md
 └── README.md
 ```
 
@@ -231,6 +271,8 @@ PPG＋ACC解析により，モーションアーチファクトを考慮した�
 ### 4．設定とロジックの分離
 
 解析条件を `config.json` に外出しし，再利用性を向上させる．
+
+設定ファイルは `services/settings.py` から一度読み込み，画面処理と解析サービスで同じ設定を参照する．ログCSVの読込，列確認，時刻変換，隣接するタスク境界の区間化は `services/common.py` に集約する．
 
 ------------------------------------------------------------------------
 

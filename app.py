@@ -1,8 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import json
-import os
 import warnings
+import math
+
 
 from services.common import (
     get_uploaded_files_dict,
@@ -19,10 +19,6 @@ CORS(app)
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
-
 @app.route('/')
 def index():
     return send_from_directory('.', 'index.html')
@@ -35,10 +31,44 @@ def static_files(filename):
 def upload_files():
     analysis_types = request.form.getlist('analysis_types[]')
     files = request.files.getlist('files')
-    has_log = request.form.get('has_log') == 'true'
-    interval_min = int(request.form.get('interval_min', 5))
-    analysis_start_offset_sec = float(request.form.get('analysis_start_offset_sec', 0))
-    analysis_duration_sec = float(request.form.get('analysis_duration_sec', 0))
+    has_log_value = request.form.get('has_log', 'false').strip().lower()
+    if has_log_value not in {'true', 'false'}:
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "ログ使用の指定が不正です"
+        }]), 400
+    has_log = has_log_value == 'true'
+
+    try:
+        interval_value = float(request.form.get('interval_min', 5))
+        analysis_start_offset_sec = float(
+            request.form.get('analysis_start_offset_sec', 0)
+        )
+        analysis_duration_sec = float(
+            request.form.get('analysis_duration_sec', 0)
+        )
+        if not math.isfinite(interval_value) or not interval_value.is_integer():
+            raise ValueError
+        interval_min = int(interval_value)
+        if not math.isfinite(analysis_start_offset_sec) or analysis_start_offset_sec < 0:
+            raise ValueError
+        if not math.isfinite(analysis_duration_sec) or analysis_duration_sec < 0:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "区切り分数，開始オフセット，解析時間は有効な数値で指定してください"
+        }]), 400
+
+    interval_modes = {'mlx_evaluation', 'mlx_reevaluation', 'max_evaluation',
+                      'ppg_analysis', 'ppg_hr_analysis'}
+    if not has_log and interval_min <= 0 and any(
+        mode in interval_modes for mode in analysis_types
+    ):
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "区切り分数には 1 以上の整数を指定してください"
+        }]), 400
     preview_axis = request.form.get("preview_axis", "index")
     preview_scale = request.form.get("preview_scale", "same")
     preview_column_values = request.form.getlist('preview_columns[]')

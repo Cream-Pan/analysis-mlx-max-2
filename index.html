@@ -48,6 +48,9 @@
                         <input type="radio" name="analysis_type" value="ppg_acc_analysis">
                         PPG+ACC解析
                     </label>
+                </fieldset>
+                <fieldset>
+                    <legend>旧デバイス性能評価</legend>
                     <label>
                         <input type="radio" name="analysis_type" value="mlx_reevaluation">
                         MLX修正後評価
@@ -149,6 +152,16 @@
         <div id="result">
             </div>
 
+        <script src="js/charts/file-preview.js" defer></script>
+        <script src="js/results/evaluations.js" defer></script>
+        <script src="js/results/ppg-acc-table-rows.js" defer></script>
+        <script src="js/results/ppg-acc-actions.js" defer></script>
+        <script src="js/results/ppg-acc-formatters.js" defer></script>
+        <script src="js/results/ppg-acc-analysis.js" defer></script>
+        <script src="js/results/ppg-comparison.js" defer></script>
+        <script src="js/actions/file-export.js" defer></script>
+        <script src="js/results/ppg-to-hr.js" defer></script>
+        <script src="js/results/ppg-hr-analysis.js" defer></script>
         <script src="app.js" defer></script>
     </body>
 </html>

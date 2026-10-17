@@ -1,4 +1,3 @@
-import io
 import re
 import pandas as pd
 import numpy as np
@@ -8,31 +7,26 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from itertools import combinations
 
-from services.common import config, load_log_tasks
+from services.common import (
+    config,
+    load_log_tasks,
+    parse_datetime_series,
+    read_uploaded_csv,
+    read_uploaded_csv_columns,
+)
 from services.hr_compare_service import evaluate_hr_pair
-
-def _parse_datetime_series(series):
-    """CSV に ="..." 形式の時刻が混ざっていても datetime 化する。"""
-    cleaned = (
-        series.astype(str)
-        .str.strip()
-        .str.replace('="', '', regex=False)
-        .str.replace('"', '', regex=False)
-    )
-    return pd.to_datetime(cleaned, errors="coerce")
 
 def load_ppg_hr_csv(f_obj):
     hr_cfg = config["ppg_columns"]["hr_csv"]
     time_col = hr_cfg["time"]
     hr_col = hr_cfg["hr"]
 
-    df = pd.read_csv(
-        io.BytesIO(f_obj.read()),
+    df = read_uploaded_csv(
+        f_obj,
         usecols=[time_col, hr_col]
     )
-    f_obj.seek(0)
 
-    df[time_col] = _parse_datetime_series(df[time_col])
+    df[time_col] = parse_datetime_series(df[time_col])
     df[hr_col] = pd.to_numeric(df[hr_col], errors="coerce")
 
     df = df.dropna(subset=[time_col, hr_col])
@@ -62,10 +56,9 @@ def load_ppg_raw_csv(f_obj):
         elapsed_col
     ]
 
-    df = pd.read_csv(io.BytesIO(f_obj.read()), usecols=usecols)
-    f_obj.seek(0)
+    df = read_uploaded_csv(f_obj, usecols=usecols)
 
-    df[time_col] = _parse_datetime_series(df[time_col])
+    df[time_col] = parse_datetime_series(df[time_col])
     for col in [
         ir_col, red_col,
         accel_x_col, accel_y_col, accel_z_col,
@@ -103,13 +96,12 @@ def load_ppg_wave_csv(f_obj):
     time_col = wave_cfg["time"]
     ir_col = wave_cfg["ir"]
 
-    df = pd.read_csv(
-        io.BytesIO(f_obj.read()),
+    df = read_uploaded_csv(
+        f_obj,
         usecols=[time_col, ir_col]
     )
-    f_obj.seek(0)
 
-    df[time_col] = _parse_datetime_series(df[time_col])
+    df[time_col] = parse_datetime_series(df[time_col])
     df[ir_col] = pd.to_numeric(df[ir_col], errors="coerce")
 
     df = df.dropna(subset=[time_col, ir_col]).copy()
@@ -138,13 +130,10 @@ def resolve_ppg_raw_file(uploaded_files):
             continue
 
         try:
-            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
-            f.seek(0)
+            cols = read_uploaded_csv_columns(f)
         except Exception:
-            f.seek(0)
             continue
 
-        cols = set(header_df.columns.tolist())
         if required_cols.issubset(cols):
             return filename
 
@@ -161,13 +150,10 @@ def resolve_ppg_hr_files(uploaded_files):
             continue
 
         try:
-            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
-            f.seek(0)
+            cols = read_uploaded_csv_columns(f)
         except Exception:
-            f.seek(0)
             continue
 
-        cols = set(header_df.columns.tolist())
         if required_cols.issubset(cols):
             matched.append(filename)
 
@@ -188,13 +174,10 @@ def resolve_ppg_wave_files(uploaded_files):
             continue
 
         try:
-            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
-            f.seek(0)
+            cols = read_uploaded_csv_columns(f)
         except Exception:
-            f.seek(0)
             continue
 
-        cols = set(header_df.columns.tolist())
         if {time_col, ir_col}.issubset(cols):
             matched.append(filename)
 
