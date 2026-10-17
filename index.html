@@ -27,8 +27,19 @@
                     <legend>解析メニュー</legend>
                     <label>
                         <input type="radio" name="analysis_type" value="show_files">
-                        ファイル内容を表示
+                        グラフ表示
                     </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="ppg_to_hr">
+                        PPG→HR変換
+                    </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="ppg_hr_analysis">
+                        PPG脈波解析
+                    </label>
+                </fieldset>
+                <fieldset>
+                    <legend>デバイス性能評価</legend>
                     <label>
                         <input type="radio" name="analysis_type" value="mlx_evaluation">
                         MLX評価
@@ -46,23 +57,15 @@
                         PPG解析
                     </label>
                     <label>
-                        <input type="radio" name="analysis_type" value="ppg_to_hr">
-                        PPG→HR変換
-                    </label>
-                    <label>
                         <input type="radio" name="analysis_type" value="max_evaluation">
                         MAX評価
-                    </label>
-                    <label>
-                        <input type="radio" name="analysis_type" value="ppg_hr_analysis">
-                        PPG脈波解析
                     </label>
                 </fieldset>
             </div>
 
             <div class="controls"  id="logfile-wrapper">
                 <label style="font-weight: bold;">
-                    <input type="checkbox" id="hasLogFile" checked> ログファイル(log.csv)を使用する
+                    <input type="checkbox" id="hasLogFile" checked> ログファイル(log.csv)を使用する（タスクごとに解析）
                 </label>
             </div>
 
@@ -103,10 +106,11 @@
                     id="analysisDurationSec"
                     min="0.1"
                     step="0.1"
-                    value="60"
+                    value=""
+                    placeholder="未入力で末尾まで"
                     style="width: 100px;"
                 >
-                <span>秒間を解析対象にする</span>
+                <span>秒間を解析対象にする（未入力時はファイル末尾まで）</span>
             </div>
             <div class="controls" id="preview-columns-wrapper" style="display: none;">
                 <label for="previewColumns" style="font-weight: bold;">
