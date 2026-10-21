@@ -16,7 +16,8 @@ from services.settings import config
 from services.file_preview_service import perform_file_preview
 from services.mlx_service import process_mlx_common
 from services.max_service import perform_max_evaluation
-from services.ppg_service import process_ppg_to_hr, perform_ppg_hr_comparison, perform_ppg_wave_hrv_analysis
+from services.ppg_service import process_ppg_to_hr, perform_ppg_hr_comparison
+from services.ppg_prv_service import perform_ppg_wave_hrv_analysis
 from services.ppg_acc_service import perform_ppg_acc_analysis
 from services.security import (
     STATIC_ASSETS,
