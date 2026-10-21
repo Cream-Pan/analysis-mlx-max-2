@@ -1,6 +1,7 @@
 import pandas as pd
 
-from services.common import config, load_log_tasks, read_uploaded_csv
+from services.common import config, read_uploaded_csv
+from services.log_service import load_log_tasks
 from services.hr_compare_service import evaluate_hr_pair
 
 def load_ecg_csv(f_obj):

@@ -1,4 +1,8 @@
 {
+  "upload_limits": {
+    "max_file_size_mb": 256,
+    "max_request_size_mb": 512
+  },
   "common_input_columns": {
     "log": ["Task_Name", "Timestamp"]
   },

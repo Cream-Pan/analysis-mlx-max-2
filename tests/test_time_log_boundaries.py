@@ -5,7 +5,7 @@ import unittest
 import pandas as pd
 
 from services.common import config as common_config
-from services.common import load_log_tasks, load_preview_log_range
+from services.log_service import load_log_tasks, load_preview_log_range
 from services.settings import config as shared_config
 
 

@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-from services.common import config, load_body_temp, load_log_tasks, parse_datetime_or_duration, read_uploaded_csv
+from services.common import config, load_body_temp, read_uploaded_csv
+from services.log_service import load_log_tasks
+from services.time_utils import parse_datetime_or_duration
 
 
 def get_mlx_layout(mode, file_kind):

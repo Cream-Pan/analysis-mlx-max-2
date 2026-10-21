@@ -15,7 +15,8 @@ from scipy.signal import (
     welch,
 )
 
-from services.common import config, load_log_tasks, read_uploaded_csv_columns
+from services.common import config, read_uploaded_csv_columns
+from services.log_service import load_log_tasks
 from services.ppg_service import load_ppg_raw_csv
 
 

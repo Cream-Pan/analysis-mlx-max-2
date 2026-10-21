@@ -182,6 +182,8 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 
 ``` text
 .
+├── .gitignore
+├── .python-version
 ├── app.py
 ├── app.js
 ├── js/
@@ -202,16 +204,30 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 ├── style.css
 ├── config.json
 ├── requirements.txt
+├── start_app.bat
+├── vendor/
+│   ├── chartjs/
+│   ├── chartjs-adapter-date-fns/
+│   ├── chartjs-plugin-annotation/
+│   ├── chartjs-plugin-zoom/
+│   ├── html2canvas/
+│   ├── SHA256SUMS.txt
+│   └── README.md
 ├── services/
 │   ├── __init__.py
 │   ├── settings.py
 │   ├── common.py
+│   ├── time_utils.py
+│   ├── log_service.py
+│   ├── file_preview_service.py
 │   ├── mlx_service.py
 │   ├── max_service.py
 │   ├── hr_compare_service.py
 │   ├── ppg_service.py
-│   └── ppg_acc_service.py
+│   ├── ppg_acc_service.py
+│   └── security.py
 ├── tests/
+│   ├── test_app_security.py
 │   ├── test_input_validation.py
 │   ├── test_regression_basics.py
 │   ├── test_time_log_boundaries.py
@@ -224,9 +240,18 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 
 ## セットアップ
 
-``` bash
-pip install -r requirements.txt
+CPython 3.11 以上を使用する．依存ライブラリのバージョンは `requirements.txt` に固定している．Windows では，次の手順で仮想環境を作成してから起動する．
+
+``` powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
 ```
+
+アップロード容量は `config.json` の `upload_limits` で設定する．初期値は1ファイルあたり256 MiB，リクエスト全体で512 MiBである．同じファイル名（大文字・小文字の違いを含む）を複数選択した場合は，解析前にエラーを返す．
+
+安全性のため，開発サーバーは `127.0.0.1` のみで待ち受け，デバッグモードと CORS は既定で無効にする．画面が必要とするファイルだけを配信し，それ以外のアプリ内ファイルへのアクセスは拒否する．`/upload` は同一オリジンか許可済みオリジンからのみ受け付ける．別オリジンから利用する構成に限り，`VITBUDS_CORS_ORIGINS` に許可するオリジンをカンマ区切りで指定する（例：`https://example.org`）．`*` は指定できない．公開環境では開発サーバーを使わず，本番用 WSGI サーバーと HTTPS を設定する．グラフ関連ライブラリもローカル配信するため，アプリ起動後の画面利用にCDN接続は不要である．
 
 `app.py` と同じディレクトリに以下を配置する．
 
@@ -272,7 +297,7 @@ PPG＋ACC解析により，モーションアーチファクトを考慮した�
 
 解析条件を `config.json` に外出しし，再利用性を向上させる．
 
-設定ファイルは `services/settings.py` から一度読み込み，画面処理と解析サービスで同じ設定を参照する．ログCSVの読込，列確認，時刻変換，隣接するタスク境界の区間化は `services/common.py` に集約する．
+設定ファイルは `services/settings.py` から一度読み込み，画面処理と解析サービスで同じ設定を参照する．`services/common.py` はアップロードと入力検証を担当し，ログ区間処理は `services/log_service.py`，時刻変換は `services/time_utils.py` に分離する．
 
 ------------------------------------------------------------------------
 

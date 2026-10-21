@@ -11,12 +11,11 @@ import unittest
 import pandas as pd
 
 from services.common import (
-    parse_datetime_or_duration,
-    parse_datetime_series,
     read_uploaded_csv,
     read_uploaded_csv_columns,
     resolve_log_file,
 )
+from services.time_utils import parse_datetime_or_duration, parse_datetime_series
 from services.hr_compare_service import evaluate_hr_pair
 from services.ppg_service import (
     load_ppg_hr_csv,

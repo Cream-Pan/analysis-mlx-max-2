@@ -2,9 +2,16 @@
 from io import BytesIO
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
-from services.common import config, validate_required_files
+from services.common import (
+    UploadSizeLimitError,
+    config,
+    get_uploaded_files_dict,
+    validate_required_files,
+    validate_uploaded_file_sizes,
+)
 
 
 def _csv(text):
@@ -105,6 +112,47 @@ class ModeInputSchemaTests(unittest.TestCase):
         ok, message = validate_required_files(files, "mlx_evaluation", False)
         self.assertFalse(ok)
         self.assertIn("8 列以上", message)
+
+
+
+def _upload(filename, payload):
+    return SimpleNamespace(
+        filename=filename,
+        stream=BytesIO(payload),
+    )
+
+
+class UploadSafetyTests(unittest.TestCase):
+    def test_duplicate_upload_filenames_are_rejected_case_insensitively(self):
+        files = [
+            _upload(r"C:\\data\\sensor.csv", b"first"),
+            _upload("sensor.CSV", b"second"),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "同じファイル名"):
+            get_uploaded_files_dict(files)
+
+    def test_upload_size_limits_enforce_per_file_and_total_caps(self):
+        files = [
+            _upload("one.csv", b"1234"),
+            _upload("two.csv", b"5678"),
+        ]
+        files[0].stream.seek(2)
+
+        validate_uploaded_file_sizes(
+            files, max_file_bytes=4, max_total_bytes=8
+        )
+        self.assertEqual(files[0].stream.tell(), 2)
+
+        with self.assertRaises(UploadSizeLimitError):
+            validate_uploaded_file_sizes(
+                files, max_file_bytes=3, max_total_bytes=8
+            )
+
+        with self.assertRaises(UploadSizeLimitError):
+            validate_uploaded_file_sizes(
+                files, max_file_bytes=4, max_total_bytes=7
+            )
 
 
 REAL_DATA_DIR = Path(__file__).parent / "real_data"

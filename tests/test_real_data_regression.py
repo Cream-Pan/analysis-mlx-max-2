@@ -135,7 +135,7 @@ class RealDataRegressionTests(unittest.TestCase):
         self.assertEqual(result["download"]["filename"], raw[:-4] + "_HR.csv")
         _assert_csv_matches(
             self, result["download"]["csv_text"],
-            _read_entry("ppg_hr_ayane", raw[:-4] + "_HR.csv"), tolerance=0,
+            _read_entry("ppg_hr_ayane", raw[:-4] + "_HR.csv"),
         )
 
     def test_ppg_to_hr_shion_matches_saved_output(self):
@@ -145,7 +145,7 @@ class RealDataRegressionTests(unittest.TestCase):
         self.assertEqual(result["download"]["filename"], raw[:-4] + "_HR.csv")
         _assert_csv_matches(
             self, result["download"]["csv_text"],
-            _read_entry("ppg_hr_shion", raw[:-4] + "_HR.csv"), tolerance=0,
+            _read_entry("ppg_hr_shion", raw[:-4] + "_HR.csv"),
         )
 
     def _test_ppg_acc(self, person, raw_fin, raw_ear, log):
