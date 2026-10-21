@@ -1,4 +1,3 @@
-import io
 import re
 import pandas as pd
 import numpy as np
@@ -8,31 +7,26 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from itertools import combinations
 
-from services.common import config, load_log_tasks
+from services.common import (
+    config,
+    read_uploaded_csv,
+    read_uploaded_csv_columns,
+)
+from services.log_service import load_log_tasks
+from services.time_utils import parse_datetime_series
 from services.hr_compare_service import evaluate_hr_pair
-
-def _parse_datetime_series(series):
-    """CSV に ="..." 形式の時刻が混ざっていても datetime 化する。"""
-    cleaned = (
-        series.astype(str)
-        .str.strip()
-        .str.replace('="', '', regex=False)
-        .str.replace('"', '', regex=False)
-    )
-    return pd.to_datetime(cleaned, errors="coerce")
 
 def load_ppg_hr_csv(f_obj):
     hr_cfg = config["ppg_columns"]["hr_csv"]
     time_col = hr_cfg["time"]
     hr_col = hr_cfg["hr"]
 
-    df = pd.read_csv(
-        io.BytesIO(f_obj.read()),
+    df = read_uploaded_csv(
+        f_obj,
         usecols=[time_col, hr_col]
     )
-    f_obj.seek(0)
 
-    df[time_col] = _parse_datetime_series(df[time_col])
+    df[time_col] = parse_datetime_series(df[time_col])
     df[hr_col] = pd.to_numeric(df[hr_col], errors="coerce")
 
     df = df.dropna(subset=[time_col, hr_col])
@@ -62,10 +56,9 @@ def load_ppg_raw_csv(f_obj):
         elapsed_col
     ]
 
-    df = pd.read_csv(io.BytesIO(f_obj.read()), usecols=usecols)
-    f_obj.seek(0)
+    df = read_uploaded_csv(f_obj, usecols=usecols)
 
-    df[time_col] = _parse_datetime_series(df[time_col])
+    df[time_col] = parse_datetime_series(df[time_col])
     for col in [
         ir_col, red_col,
         accel_x_col, accel_y_col, accel_z_col,
@@ -103,13 +96,12 @@ def load_ppg_wave_csv(f_obj):
     time_col = wave_cfg["time"]
     ir_col = wave_cfg["ir"]
 
-    df = pd.read_csv(
-        io.BytesIO(f_obj.read()),
+    df = read_uploaded_csv(
+        f_obj,
         usecols=[time_col, ir_col]
     )
-    f_obj.seek(0)
 
-    df[time_col] = _parse_datetime_series(df[time_col])
+    df[time_col] = parse_datetime_series(df[time_col])
     df[ir_col] = pd.to_numeric(df[ir_col], errors="coerce")
 
     df = df.dropna(subset=[time_col, ir_col]).copy()
@@ -138,13 +130,10 @@ def resolve_ppg_raw_file(uploaded_files):
             continue
 
         try:
-            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
-            f.seek(0)
+            cols = read_uploaded_csv_columns(f)
         except Exception:
-            f.seek(0)
             continue
 
-        cols = set(header_df.columns.tolist())
         if required_cols.issubset(cols):
             return filename
 
@@ -161,13 +150,10 @@ def resolve_ppg_hr_files(uploaded_files):
             continue
 
         try:
-            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
-            f.seek(0)
+            cols = read_uploaded_csv_columns(f)
         except Exception:
-            f.seek(0)
             continue
 
-        cols = set(header_df.columns.tolist())
         if required_cols.issubset(cols):
             matched.append(filename)
 
@@ -188,13 +174,10 @@ def resolve_ppg_wave_files(uploaded_files):
             continue
 
         try:
-            header_df = pd.read_csv(io.BytesIO(f.read()), nrows=0)
-            f.seek(0)
+            cols = read_uploaded_csv_columns(f)
         except Exception:
-            f.seek(0)
             continue
 
-        cols = set(header_df.columns.tolist())
         if {time_col, ir_col}.issubset(cols):
             matched.append(filename)
 
@@ -548,6 +531,127 @@ def process_ppg_to_hr(
         }
 
     
+def _ppg_data_quality_metrics(df):
+    """PPG区間のサンプル数，推定周波数，時刻ギャップ数を返す．"""
+    time_values = df["RecvJST"].astype("int64").to_numpy() / 1e9
+    time_diffs = np.diff(time_values)
+    positive_diffs = time_diffs[time_diffs > 0]
+    if len(positive_diffs) == 0:
+        return {
+            "sample_count": int(len(df)),
+            "sample_rate_hz": None,
+            "sample_gap_count": None,
+        }
+
+    median_dt = float(np.median(positive_diffs))
+    gap_count = int(np.sum(positive_diffs > median_dt * 1.5))
+    return {
+        "sample_count": int(len(df)),
+        "sample_rate_hz": float(1.0 / median_dt),
+        "sample_gap_count": gap_count,
+    }
+
+
+def _calculate_ppg_hrv_metrics(df, quality_metrics=None):
+    """1つの時間区間からPPG脈波・PRV指標を計算する．"""
+    if len(df) < 3:
+        raise ValueError("解析対象データが不足しています")
+
+    time_sec = (df["RecvJST"] - df["RecvJST"].iloc[0]).dt.total_seconds().to_numpy()
+    ir = df["IR_Value"].to_numpy(dtype=float)
+    positive_diffs = np.diff(time_sec)
+    positive_diffs = positive_diffs[positive_diffs > 0]
+    if len(positive_diffs) == 0:
+        raise ValueError("サンプル時刻からサンプリング周波数を推定できません")
+    fs = 1.0 / float(np.median(positive_diffs))
+
+    ir = ir - np.nanmean(ir)
+    min_interval_sec = 60.0 / 150.0
+    # 浮動小数点誤差で150 bpm付近のピークを誤って落とさないよう丸める．
+    min_distance = max(1, int(round(fs * min_interval_sec)))
+    prominence = max(np.nanstd(ir) * 0.3, 1e-6)
+    peaks, _ = find_peaks(ir, distance=min_distance, prominence=prominence)
+
+    if len(peaks) < 3:
+        raise ValueError("有効な脈波ピークが不足しています")
+
+    peak_times = time_sec[peaks]
+    all_nn_intervals = np.diff(peak_times)
+    valid_nn = (all_nn_intervals >= min_interval_sec) & (all_nn_intervals <= 2.0)
+    nn_intervals = all_nn_intervals[valid_nn]
+    if len(nn_intervals) < 3:
+        raise ValueError("有効なNN間隔が不足しています")
+
+    # NN50は時間的に隣り合う有効間隔だけを比較し，無効間隔をまたがない．
+    adjacent_valid_pairs = valid_nn[:-1] & valid_nn[1:]
+    nn_diff = np.abs(np.diff(all_nn_intervals))[adjacent_valid_pairs]
+    nn50 = int(np.sum(nn_diff > 0.05))
+    pnn50 = float(nn50 / len(nn_diff) * 100) if len(nn_diff) > 0 else None
+
+    nn_times = peak_times[1:][valid_nn]
+    interp_fs = 4.0
+    lf_power = hf_power = lf_hf = None
+    min_frequency_duration_sec = 300.0
+    recorded_duration_sec = float(time_sec[-1] - time_sec[0] + 1.0 / fs)
+    valid_interval_duration_sec = (
+        float(nn_times[-1] - nn_times[0] + nn_intervals[0])
+        if len(nn_times) > 0
+        else 0.0
+    )
+    frequency_status = "計算済み"
+    if recorded_duration_sec < min_frequency_duration_sec:
+        frequency_status = "記録区間が5分未満のため算出対象外"
+    elif len(nn_times) >= 4:
+        uniform_t = np.arange(nn_times[0], nn_times[-1], 1.0 / interp_fs)
+        if (
+            len(uniform_t) >= 8
+            and valid_interval_duration_sec >= min_frequency_duration_sec - 2.0
+        ):
+            f_interp = interp1d(
+                nn_times, nn_intervals, kind="linear",
+                bounds_error=False, fill_value="extrapolate"
+            )
+            nn_uniform = f_interp(uniform_t)
+            nn_uniform = nn_uniform - np.mean(nn_uniform)
+            nperseg = min(256, len(nn_uniform))
+            freqs, psd = welch(nn_uniform, fs=interp_fs, nperseg=nperseg)
+            lf_mask = (freqs >= 0.04) & (freqs < 0.15)
+            hf_mask = (freqs >= 0.15) & (freqs < 0.40)
+            lf_power = float(trapezoid(psd[lf_mask], freqs[lf_mask])) if np.any(lf_mask) else None
+            hf_power = float(trapezoid(psd[hf_mask], freqs[hf_mask])) if np.any(hf_mask) else None
+            if hf_power is not None and hf_power > 0 and lf_power is not None:
+                lf_hf = float(lf_power / hf_power)
+        else:
+            frequency_status = "有効な間隔が5分未満のため算出対象外"
+    else:
+        frequency_status = "有効な間隔が不足しているため算出対象外"
+
+    quality = quality_metrics or _ppg_data_quality_metrics(df)
+    valid_interval_pct = (
+        float(len(nn_intervals) / len(all_nn_intervals) * 100)
+        if len(all_nn_intervals) > 0
+        else None
+    )
+
+    return {
+        "fs": float(fs),
+        "peak_count": int(len(peaks)),
+        "nn_count": int(len(nn_intervals)),
+        "valid_interval_pct": valid_interval_pct,
+        "sample_count": quality["sample_count"],
+        "sample_rate_hz": quality["sample_rate_hz"],
+        "sample_gap_count": quality["sample_gap_count"],
+        "frequency_status": frequency_status,
+        "mean_nn_ms": float(np.mean(nn_intervals) * 1000),
+        "mean_hr_bpm": float(60.0 / np.mean(nn_intervals)),
+        "nn50": nn50,
+        "pnn50": pnn50,
+        "lf_power": lf_power,
+        "hf_power": hf_power,
+        "lf_hf": lf_hf
+    }
+
+
 def perform_ppg_wave_hrv_analysis(uploaded_files, has_log, interval_min, analysis_start_offset_sec=0, analysis_duration_sec=0):
     try:
         filenames = resolve_ppg_wave_files(uploaded_files)
@@ -555,121 +659,93 @@ def perform_ppg_wave_hrv_analysis(uploaded_files, has_log, interval_min, analysi
 
         for filename in filenames:
             df = load_ppg_wave_csv(uploaded_files[filename])
+            file_start = df["RecvJST"].min()
+            file_last_sample = df["RecvJST"].max()
+            positive_diffs = df["RecvJST"].diff().dt.total_seconds()
+            positive_diffs = positive_diffs[positive_diffs > 0]
+            sample_period = float(positive_diffs.median()) if not positive_diffs.empty else 0.01
+            file_end_exclusive = file_last_sample + pd.Timedelta(seconds=sample_period)
 
-            analysis_start_time = df["RecvJST"].min() + pd.Timedelta(seconds=analysis_start_offset_sec)
-            analysis_end_time = analysis_start_time + pd.Timedelta(seconds=analysis_duration_sec)
-
-            if analysis_duration_sec <= 0:
-                raise ValueError("PPG脈波解析では解析時間を 0 秒より大きく指定してください")
-
-            if df["RecvJST"].max() < analysis_end_time:
-                available_sec = (df["RecvJST"].max() - analysis_start_time).total_seconds()
-                raise ValueError(
-                    f"{filename} は指定した解析時間 {analysis_duration_sec:.1f} 秒を確保できません．"
-                    f"オフセット後に利用可能なのは {max(0.0, available_sec):.1f} 秒です．"
+            if has_log:
+                tasks = load_log_tasks(
+                    uploaded_files, True, interval_min,
+                    file_start, file_end_exclusive, file_start.normalize()
                 )
-
-            df = df[(df["RecvJST"] >= analysis_start_time) & (df["RecvJST"] < analysis_end_time)].copy()
-
-            if len(df) < 3:
-                raise ValueError(f"{filename} は解析対象データが不足しています")
-
-            time_sec = (df["RecvJST"] - df["RecvJST"].iloc[0]).dt.total_seconds().to_numpy()
-            ir = df["IR_Value"].to_numpy()
-
-            mean_dt = np.mean(np.diff(time_sec))
-            fs = 1.0 / mean_dt if mean_dt > 0 else 100.0
-
-            # PPG波形の前処理
-            ir = ir - np.nanmean(ir)
-
-            # 心拍ピーク検出
-            # 0.4秒以上離れたピークのみ採用する．これは最大150 bpm相当
-            min_distance = max(1, int(fs * 0.4))
-            prominence = max(np.nanstd(ir) * 0.3, 1e-6)
-
-            peaks, _ = find_peaks(
-                ir,
-                distance=min_distance,
-                prominence=prominence
-            )
-
-            if len(peaks) < 3:
-                raise ValueError(f"{filename} は有効な脈波ピークが不足しています")
-
-            peak_times = time_sec[peaks]
-            nn_intervals = np.diff(peak_times)
-
-            # 異常なNN間隔を除外
-            # 0.3秒未満: 200 bpm超，2.0秒超: 30 bpm未満
-            valid_nn = (nn_intervals >= 0.3) & (nn_intervals <= 2.0)
-            nn_intervals = nn_intervals[valid_nn]
-
-            if len(nn_intervals) < 3:
-                raise ValueError(f"{filename} は有効なNN間隔が不足しています")
-
-            # PNN50
-            nn_diff = np.abs(np.diff(nn_intervals))
-            nn50 = int(np.sum(nn_diff > 0.05))
-            pnn50 = float(nn50 / len(nn_diff) * 100) if len(nn_diff) > 0 else None
-
-            # LF/HF
-            # NN間隔系列を4Hzへ補間してPSD計算
-            nn_times = peak_times[1:][valid_nn]
-            interp_fs = 4.0
-
-            if len(nn_times) < 4:
-                lf_power = None
-                hf_power = None
-                lf_hf = None
+                segments = []
+                for task in tasks:
+                    segment_start = max(task["Start_Time"], file_start)
+                    segment_end = min(task["End_Time"], file_end_exclusive)
+                    if segment_start < segment_end:
+                        segments.append((task["Task_Name"], segment_start, segment_end))
             else:
-                uniform_t = np.arange(nn_times[0], nn_times[-1], 1.0 / interp_fs)
+                if interval_min <= 0:
+                    raise ValueError("区切り分数には1以上を指定してください")
 
-                if len(uniform_t) < 8:
-                    lf_power = None
-                    hf_power = None
-                    lf_hf = None
+                analysis_start_time = file_start + pd.Timedelta(seconds=analysis_start_offset_sec)
+                if analysis_start_time >= file_end_exclusive:
+                    raise ValueError(f"{filename} は開始オフセット後に解析できるデータがありません")
+
+                if analysis_duration_sec > 0:
+                    analysis_end_time = analysis_start_time + pd.Timedelta(seconds=analysis_duration_sec)
+                    if analysis_end_time > file_end_exclusive:
+                        available_sec = (file_end_exclusive - analysis_start_time).total_seconds()
+                        raise ValueError(
+                            f"{filename} は指定した解析時間 {analysis_duration_sec:.1f} 秒を確保できません．"
+                            f"オフセット後に利用可能なのは {max(0.0, available_sec):.1f} 秒です．"
+                        )
                 else:
-                    f_interp = interp1d(
-                        nn_times,
-                        nn_intervals,
-                        kind="linear",
-                        bounds_error=False,
-                        fill_value="extrapolate"
+                    analysis_end_time = file_end_exclusive
+
+                segments = []
+                segment_start = analysis_start_time
+                segment_index = 1
+                while segment_start < analysis_end_time:
+                    segment_end = min(
+                        segment_start + pd.Timedelta(minutes=interval_min),
+                        analysis_end_time
                     )
+                    segments.append((f"区間{segment_index}", segment_start, segment_end))
+                    segment_start = segment_end
+                    segment_index += 1
 
-                    nn_uniform = f_interp(uniform_t)
-                    nn_uniform = nn_uniform - np.mean(nn_uniform)
+            if not segments:
+                raise ValueError(f"{filename} の解析時間に該当するログタスクがありません")
 
-                    nperseg = min(256, len(nn_uniform))
-                    freqs, psd = welch(nn_uniform, fs=interp_fs, nperseg=nperseg)
-
-                    lf_mask = (freqs >= 0.04) & (freqs < 0.15)
-                    hf_mask = (freqs >= 0.15) & (freqs < 0.40)
-
-                    lf_power = float(trapezoid(psd[lf_mask], freqs[lf_mask])) if np.any(lf_mask) else None
-                    hf_power = float(trapezoid(psd[hf_mask], freqs[hf_mask])) if np.any(hf_mask) else None
-
-                    if hf_power is not None and hf_power > 0 and lf_power is not None:
-                        lf_hf = float(lf_power / hf_power)
-                    else:
-                        lf_hf = None
-
-            results.append({
-                "filename": filename,
-                "start_time": analysis_start_time.isoformat(),
-                "end_time": analysis_end_time.isoformat(),
-                "fs": float(fs),
-                "peak_count": int(len(peaks)),
-                "nn_count": int(len(nn_intervals)),
-                "mean_nn_ms": float(np.mean(nn_intervals) * 1000),
-                "mean_hr_bpm": float(60.0 / np.mean(nn_intervals)),
-                "nn50": nn50,
-                "pnn50": pnn50,
-                "lf_power": lf_power,
-                "hf_power": hf_power,
-                "lf_hf": lf_hf
-            })
+            for task_name, segment_start, segment_end in segments:
+                segment_df = df[
+                    (df["RecvJST"] >= segment_start)
+                    & (df["RecvJST"] < segment_end)
+                ].copy()
+                row = {
+                    "filename": filename,
+                    "task": str(task_name),
+                    "start_time": segment_start.isoformat(),
+                    "end_time": segment_end.isoformat(),
+                }
+                quality_metrics = _ppg_data_quality_metrics(segment_df)
+                row.update(quality_metrics)
+                try:
+                    row.update(_calculate_ppg_hrv_metrics(segment_df, quality_metrics))
+                    row["status"] = "success"
+                    row["message"] = None
+                except ValueError as error:
+                    row.update({
+                        "status": "error",
+                        "message": str(error),
+                        "fs": None,
+                        "peak_count": 0,
+                        "nn_count": 0,
+                        "valid_interval_pct": None,
+                        "frequency_status": "解析不可",
+                        "mean_nn_ms": None,
+                        "mean_hr_bpm": None,
+                        "nn50": None,
+                        "pnn50": None,
+                        "lf_power": None,
+                        "hf_power": None,
+                        "lf_hf": None,
+                    })
+                results.append(row)
 
         return {
             "analysis_type": "ppg_hr_analysis",

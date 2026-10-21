@@ -1,44 +1,123 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, abort, request, jsonify, send_from_directory
 from flask_cors import CORS
-import json
-import os
 import warnings
+import math
+import os
+from pathlib import Path
+
 
 from services.common import (
+    UploadSizeLimitError,
     get_uploaded_files_dict,
     validate_required_files,
-    perform_file_preview,
+    validate_uploaded_file_sizes,
 )
+from services.settings import config
+from services.file_preview_service import perform_file_preview
 from services.mlx_service import process_mlx_common
 from services.max_service import perform_max_evaluation
 from services.ppg_service import process_ppg_to_hr, perform_ppg_hr_comparison, perform_ppg_wave_hrv_analysis
 from services.ppg_acc_service import perform_ppg_acc_analysis
+from services.security import (
+    STATIC_ASSETS,
+    is_allowed_upload_origin,
+    parse_cors_origins,
+)
 
 app = Flask(__name__)
-CORS(app)
+APP_ROOT = Path(__file__).resolve().parent
+UPLOAD_LIMITS = config.get("upload_limits", {})
+MAX_UPLOAD_FILE_BYTES = int(
+    UPLOAD_LIMITS.get("max_file_size_mb", 256)
+) * 1024 * 1024
+MAX_UPLOAD_REQUEST_BYTES = int(
+    UPLOAD_LIMITS.get("max_request_size_mb", 512)
+) * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_REQUEST_BYTES
+CORS_ORIGINS = parse_cors_origins(
+    os.environ.get("VITBUDS_CORS_ORIGINS", "")
+)
+if CORS_ORIGINS:
+    CORS(
+        app,
+        resources={r"/upload": {"origins": list(CORS_ORIGINS)}}
+    )
 warnings.filterwarnings('ignore', category=UserWarning, module='pandas')
 warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), 'config.json')
-with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-    config = json.load(f)
+@app.errorhandler(413)
+def handle_request_too_large(_error):
+    max_request_mb = MAX_UPLOAD_REQUEST_BYTES // (1024 * 1024)
+    return jsonify([{
+        "analysis_type": "error",
+        "status": "error",
+        "message": (
+            f"アップロード全体の上限（{max_request_mb} MiB）を超えています"
+        )
+    }]), 413
+
 
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    return send_from_directory(APP_ROOT, 'index.html')
 
 @app.route('/<path:filename>')
 def static_files(filename):
-    return send_from_directory('.', filename)
+    if filename not in STATIC_ASSETS:
+        abort(404)
+    return send_from_directory(APP_ROOT, filename)
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
+    origin = request.headers.get("Origin")
+    same_origin = request.host_url.rstrip("/")
+    if not is_allowed_upload_origin(origin, same_origin, CORS_ORIGINS):
+        return jsonify([{
+            "analysis_type": "error",
+            "status": "error",
+            "message": "許可されていない送信元からのリクエストです"
+        }]), 403
+
     analysis_types = request.form.getlist('analysis_types[]')
     files = request.files.getlist('files')
-    has_log = request.form.get('has_log') == 'true'
-    interval_min = int(request.form.get('interval_min', 5))
-    analysis_start_offset_sec = float(request.form.get('analysis_start_offset_sec', 0))
-    analysis_duration_sec = float(request.form.get('analysis_duration_sec', 0))
+    has_log_value = request.form.get('has_log', 'false').strip().lower()
+    if has_log_value not in {'true', 'false'}:
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "ログ使用の指定が不正です"
+        }]), 400
+    has_log = has_log_value == 'true'
+
+    try:
+        interval_value = float(request.form.get('interval_min', 5))
+        analysis_start_offset_sec = float(
+            request.form.get('analysis_start_offset_sec', 0)
+        )
+        analysis_duration_sec = float(
+            request.form.get('analysis_duration_sec', 0)
+        )
+        if not math.isfinite(interval_value) or not interval_value.is_integer():
+            raise ValueError
+        interval_min = int(interval_value)
+        if not math.isfinite(analysis_start_offset_sec) or analysis_start_offset_sec < 0:
+            raise ValueError
+        if not math.isfinite(analysis_duration_sec) or analysis_duration_sec < 0:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "区切り分数，開始オフセット，解析時間は有効な数値で指定してください"
+        }]), 400
+
+    interval_modes = {'mlx_evaluation', 'mlx_reevaluation', 'max_evaluation',
+                      'ppg_analysis', 'ppg_hr_analysis'}
+    if not has_log and interval_min <= 0 and any(
+        mode in interval_modes for mode in analysis_types
+    ):
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "区切り分数には 1 以上の整数を指定してください"
+        }]), 400
     preview_axis = request.form.get("preview_axis", "index")
     preview_scale = request.form.get("preview_scale", "same")
     preview_column_values = request.form.getlist('preview_columns[]')
@@ -66,7 +145,26 @@ def upload_files():
             "message": "解析タイプが選択されていません"
         }]), 400
 
-    uploaded_files = get_uploaded_files_dict(files)
+    try:
+        uploaded_files = get_uploaded_files_dict(files)
+        validate_uploaded_file_sizes(
+            files,
+            max_file_bytes=MAX_UPLOAD_FILE_BYTES,
+            max_total_bytes=MAX_UPLOAD_REQUEST_BYTES
+        )
+    except UploadSizeLimitError as error:
+        return jsonify([{
+            "analysis_type": "error",
+            "status": "error",
+            "message": str(error)
+        }]), 413
+    except ValueError as error:
+        return jsonify([{
+            "analysis_type": "error",
+            "status": "error",
+            "message": str(error)
+        }]), 400
+
     results = []
 
     for atype in analysis_types:
@@ -173,4 +271,7 @@ def upload_files():
     return jsonify(results)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    debug_enabled = os.environ.get("VITBUDS_DEBUG", "").strip().lower() in {
+        "1", "true", "yes"
+    }
+    app.run(host="127.0.0.1", debug=debug_enabled, port=5000)

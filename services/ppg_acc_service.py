@@ -3,7 +3,6 @@
 # Quality CSVは使用しない
 # 10 s窓，5 s間隔をログのタスク開始時刻から共通生成する
 
-import io
 import re
 
 import numpy as np
@@ -16,7 +15,8 @@ from scipy.signal import (
     welch,
 )
 
-from services.common import config, load_log_tasks
+from services.common import config, read_uploaded_csv_columns
+from services.log_service import load_log_tasks
 from services.ppg_service import load_ppg_raw_csv
 
 
@@ -134,16 +134,11 @@ def _resolve_raw_files(uploaded_files):
             continue
 
         try:
-            header = pd.read_csv(
-                io.BytesIO(file_obj.read()),
-                nrows=0,
-            )
-            file_obj.seek(0)
+            columns = read_uploaded_csv_columns(file_obj)
         except Exception:
-            file_obj.seek(0)
             continue
 
-        if required_columns.issubset(set(header.columns)):
+        if required_columns.issubset(columns):
             candidates.append(filename)
 
     fin_candidates = [

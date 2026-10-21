@@ -1,0 +1,8 @@
+# Local participant datasets for opt-in regression tests; never commit these files.
+/tests/real_data/
+
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/

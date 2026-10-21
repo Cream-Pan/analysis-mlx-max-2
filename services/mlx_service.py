@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-from services.common import config, load_body_temp, load_log_tasks, parse_datetime_or_duration
+from services.common import config, load_body_temp, read_uploaded_csv
+from services.log_service import load_log_tasks
+from services.time_utils import parse_datetime_or_duration
 
 
 def get_mlx_layout(mode, file_kind):
@@ -95,12 +97,9 @@ def load_mlx_device_data(uploaded_files, mode):
             layout = get_mlx_layout("normal", "csv")
 
             try:
-                df_raw = pd.read_csv(io.BytesIO(target_file.read()))
-                target_file.seek(0)
+                df_raw = read_uploaded_csv(target_file)
             except Exception:
-                target_file.seek(0)
-                df_raw = pd.read_csv(io.BytesIO(target_file.read()), encoding="shift_jis")
-                target_file.seek(0)
+                df_raw = read_uploaded_csv(target_file, encoding="shift_jis")
 
             if len(df_raw.columns) < layout["min_columns"]:
                 raise ValueError(f"{target_filename} の列数が不足しています")
@@ -124,12 +123,9 @@ def load_mlx_device_data(uploaded_files, mode):
         layout = get_mlx_layout("corrected", "csv")
 
         try:
-            df_raw = pd.read_csv(io.BytesIO(uploaded_files["mlx_re.csv"].read()))
-            uploaded_files["mlx_re.csv"].seek(0)
+            df_raw = read_uploaded_csv(uploaded_files["mlx_re.csv"])
         except Exception:
-            uploaded_files["mlx_re.csv"].seek(0)
-            df_raw = pd.read_csv(io.BytesIO(uploaded_files["mlx_re.csv"].read()), encoding="shift_jis")
-            uploaded_files["mlx_re.csv"].seek(0)
+            df_raw = read_uploaded_csv(uploaded_files["mlx_re.csv"], encoding="shift_jis")
 
         if len(df_raw.columns) < layout["min_columns"]:
             raise ValueError("mlx_re.csv の列数が不足しています")

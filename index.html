@@ -5,13 +5,11 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>ファイル解析アプリ</title>
         <link rel="stylesheet" href="style.css">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js">
-</script>
+        <script src="vendor/chartjs/chart.umd.min.js"></script>
+        <script src="vendor/chartjs-adapter-date-fns/chartjs-adapter-date-fns.bundle.min.js"></script>
+        <script src="vendor/chartjs-plugin-annotation/chartjs-plugin-annotation.min.js"></script>
+        <script src="vendor/chartjs-plugin-zoom/chartjs-plugin-zoom.min.js"></script>
+        <script src="vendor/html2canvas/html2canvas.min.js"></script>
     </head>
     <body>
         <h1>ファイル解析アプリ</h1>
@@ -27,8 +25,19 @@
                     <legend>解析メニュー</legend>
                     <label>
                         <input type="radio" name="analysis_type" value="show_files">
-                        ファイル内容を表示
+                        グラフ表示
                     </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="ppg_to_hr">
+                        PPG→HR変換
+                    </label>
+                    <label>
+                        <input type="radio" name="analysis_type" value="ppg_hr_analysis">
+                        PPG脈波解析
+                    </label>
+                </fieldset>
+                <fieldset>
+                    <legend>デバイス性能評価</legend>
                     <label>
                         <input type="radio" name="analysis_type" value="mlx_evaluation">
                         MLX評価
@@ -37,6 +46,9 @@
                         <input type="radio" name="analysis_type" value="ppg_acc_analysis">
                         PPG+ACC解析
                     </label>
+                </fieldset>
+                <fieldset>
+                    <legend>旧デバイス性能評価</legend>
                     <label>
                         <input type="radio" name="analysis_type" value="mlx_reevaluation">
                         MLX修正後評価
@@ -46,23 +58,15 @@
                         PPG解析
                     </label>
                     <label>
-                        <input type="radio" name="analysis_type" value="ppg_to_hr">
-                        PPG→HR変換
-                    </label>
-                    <label>
                         <input type="radio" name="analysis_type" value="max_evaluation">
                         MAX評価
-                    </label>
-                    <label>
-                        <input type="radio" name="analysis_type" value="ppg_hr_analysis">
-                        PPG脈波解析
                     </label>
                 </fieldset>
             </div>
 
             <div class="controls"  id="logfile-wrapper">
                 <label style="font-weight: bold;">
-                    <input type="checkbox" id="hasLogFile" checked> ログファイル(log.csv)を使用する
+                    <input type="checkbox" id="hasLogFile" checked> ログファイル(log.csv)を使用する（タスクごとに解析）
                 </label>
             </div>
 
@@ -103,10 +107,11 @@
                     id="analysisDurationSec"
                     min="0.1"
                     step="0.1"
-                    value="60"
+                    value=""
+                    placeholder="未入力で末尾まで"
                     style="width: 100px;"
                 >
-                <span>秒間を解析対象にする</span>
+                <span>秒間を解析対象にする（未入力時はファイル末尾まで）</span>
             </div>
             <div class="controls" id="preview-columns-wrapper" style="display: none;">
                 <label for="previewColumns" style="font-weight: bold;">
@@ -145,6 +150,16 @@
         <div id="result">
             </div>
 
+        <script src="js/charts/file-preview.js" defer></script>
+        <script src="js/results/evaluations.js" defer></script>
+        <script src="js/results/ppg-acc-table-rows.js" defer></script>
+        <script src="js/results/ppg-acc-actions.js" defer></script>
+        <script src="js/results/ppg-acc-formatters.js" defer></script>
+        <script src="js/results/ppg-acc-analysis.js" defer></script>
+        <script src="js/results/ppg-comparison.js" defer></script>
+        <script src="js/actions/file-export.js" defer></script>
+        <script src="js/results/ppg-to-hr.js" defer></script>
+        <script src="js/results/ppg-hr-analysis.js" defer></script>
         <script src="app.js" defer></script>
     </body>
 </html>

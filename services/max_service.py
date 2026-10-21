@@ -1,7 +1,7 @@
-import io
 import pandas as pd
 
-from services.common import config, load_log_tasks
+from services.common import config, read_uploaded_csv
+from services.log_service import load_log_tasks
 from services.hr_compare_service import evaluate_hr_pair
 
 def load_ecg_csv(f_obj):
@@ -9,11 +9,10 @@ def load_ecg_csv(f_obj):
     time_col = ecg_cfg["time"]
     hr_col = ecg_cfg["hr"]
 
-    df = pd.read_csv(
-        io.BytesIO(f_obj.read()),
+    df = read_uploaded_csv(
+        f_obj,
         usecols=[time_col, hr_col]
     )
-    f_obj.seek(0)
 
     df = df.dropna(subset=[hr_col]).copy()
     cleaned_timestamp = df[time_col].astype(str).str.replace('="', '', regex=False).str.replace('"', '', regex=False)
@@ -30,11 +29,10 @@ def load_ppg_csv(f_obj):
     time_col = ppg_cfg["time"]
     hr_col = ppg_cfg["hr"]
 
-    df = pd.read_csv(
-        io.BytesIO(f_obj.read()),
+    df = read_uploaded_csv(
+        f_obj,
         usecols=[time_col, hr_col]
     )
-    f_obj.seek(0)
 
     df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
     df[hr_col] = pd.to_numeric(df[hr_col], errors='coerce')
