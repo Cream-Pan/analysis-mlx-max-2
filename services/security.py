@@ -5,6 +5,7 @@ STATIC_ASSETS = frozenset({
     "config.json",
     "style.css",
     "js/actions/file-export.js",
+    "js/charts/chart-range-controls.js",
     "js/charts/file-preview.js",
     "js/results/evaluations.js",
     "js/results/ppg-acc-actions.js",

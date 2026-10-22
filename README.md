@@ -206,6 +206,7 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 │   ├── actions/
 │   │   └── file-export.js
 │   ├── charts/
+│   │   ├── chart-range-controls.js
 │   │   └── file-preview.js
 │   └── results/
 │       ├── evaluations.js

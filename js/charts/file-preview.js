@@ -199,34 +199,12 @@
                     return;
                 }
 
-                const rowCount = Number(sheet.row_count) || Math.max(
-                    ...sheet.series.map(series => series.points?.length || 0)
-                );
-
-                /*
-                 * 1データあたり約3 pxとして横長にする．
-                 * データ数が少ない場合も表示領域をCanvasで埋め，
-                 * Canvas右側へ不要な空白を作らない．
-                 */
                 const availableChartWidth = Math.max(
                     320,
                     Math.floor(
                         (resultEl.getBoundingClientRect().width || 992) - 92
                     )
                 );
-                const chartWidth = Math.min(
-                    60000,
-                    Math.max(availableChartWidth, rowCount * 3)
-                );
-
-                /*
-                 * ホイール縮小では，時間軸の表示範囲だけでなく，
-                 * Canvas自体の横幅も縮小できるようにする．
-                 * 最小幅は表示領域の幅，最大幅は従来の詳細表示幅とする．
-                 */
-                const minimumChartWidth = availableChartWidth;
-                const maximumChartWidth = chartWidth;
-                let currentChartWidth = chartWidth;
 
                 const chartLayout = document.createElement('div');
                 chartLayout.className = 'file-chart-layout';
@@ -253,25 +231,54 @@
                 scrollContainer.className = 'file-chart-scroll';
                 scrollContainer.style.flex = '1 1 auto';
                 scrollContainer.style.minWidth = '0';
-                scrollContainer.style.overflowX = 'auto';
+                scrollContainer.style.overflowX = 'hidden';
                 scrollContainer.style.overflowY = 'hidden';
 
                 const chartInner = document.createElement('div');
                 chartInner.className = 'file-chart-inner';
-                chartInner.style.width = `${chartWidth}px`;
-                chartInner.style.minWidth = `${chartWidth}px`;
+                chartInner.style.width = '100%';
+                chartInner.style.minWidth = '0';
                 chartInner.style.height = '420px';
 
                 const canvas = document.createElement('canvas');
-                canvas.width = chartWidth;
+                canvas.width = availableChartWidth;
                 canvas.height = 420;
                 canvas.style.display = 'block';
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
 
                 chartInner.appendChild(canvas);
                 scrollContainer.appendChild(chartInner);
+                const chartControls = document.createElement('div');
+                chartControls.className = 'file-chart-controls screenshot-exclude';
+                chartControls.setAttribute('data-html2canvas-ignore', 'true');
+                const resetZoomButton = document.createElement('button');
+                resetZoomButton.type = 'button';
+                resetZoomButton.className = 'file-chart-reset-zoom';
+                resetZoomButton.textContent = '表示範囲をリセット';
+                chartControls.appendChild(resetZoomButton);
+                const interactionHelp = document.createElement('span');
+                interactionHelp.textContent = 'ホイール／ピンチで拡大，ドラッグまたは下のバーで横移動できます．';
+                chartControls.appendChild(interactionHelp);
+                resultEl.appendChild(chartControls);
+
                 chartLayout.appendChild(fixedAxisContainer);
                 chartLayout.appendChild(scrollContainer);
                 resultEl.appendChild(chartLayout);
+
+                const rangeScrollbar = document.createElement('div');
+                rangeScrollbar.className = 'chart-range-scrollbar screenshot-exclude';
+                rangeScrollbar.setAttribute('data-html2canvas-ignore', 'true');
+                rangeScrollbar.setAttribute('role', 'scrollbar');
+                rangeScrollbar.setAttribute('aria-label', 'グラフの表示範囲を左右に移動');
+                rangeScrollbar.setAttribute('aria-orientation', 'horizontal');
+                rangeScrollbar.setAttribute('aria-valuemin', '0');
+                rangeScrollbar.setAttribute('aria-valuemax', '100');
+                rangeScrollbar.setAttribute('aria-valuenow', '0');
+                rangeScrollbar.tabIndex = 0;
+                rangeScrollbar.hidden = true;
+                rangeScrollbar.innerHTML = '<div class="chart-range-scrollbar-track"><div class="chart-range-scrollbar-thumb"></div></div>';
+                resultEl.appendChild(rangeScrollbar);
 
                 const isTimeAxis = sheet.x_type === 'datetime';
                 const hasLogRange = Boolean(
@@ -438,22 +445,41 @@
                     };
                 }
 
+                const taskRows = isTimeAxis ? (sheet.tasks || []) : [];
                 const annotations = Object.fromEntries(
-                    (sheet.tasks || []).map((task, index) => [
+                    taskRows.map((task, index) => [
                         `task${index}`,
                         {
                             type: 'box',
-                            xMin: new Date(task.start),
-                            xMax: new Date(task.end),
-                            backgroundColor: 'rgba(100,100,100,0.08)',
+                            xMin: new Date(task.start).getTime(),
+                            xMax: new Date(task.end).getTime(),
+                            backgroundColor: 'rgba(100, 100, 100, 0.08)',
                             borderWidth: 0,
                             label: {
                                 display: true,
-                                content: task.name
+                            content: task.name
                             }
                         }
                     ])
                 );
+                const taskBoundaries = [...new Set(taskRows
+                    .flatMap(task => [
+                        new Date(task.start).getTime(),
+                        new Date(task.end).getTime()
+                    ])
+                    .filter(value => Number.isFinite(value) && value > dataMin && value < dataMax))]
+                    .sort((a, b) => a - b);
+                taskBoundaries.forEach((time, index) => {
+                    annotations[`task-boundary-${index}`] = {
+                        type: 'line',
+                        xMin: time,
+                        xMax: time,
+                        borderColor: 'rgba(55, 65, 81, 0.62)',
+                        borderWidth: 1,
+                        borderDash: [4, 3],
+                        z: 1
+                    };
+                });
 
                 const fixedYAxisPlugin = {
                     id: `fixedYAxis-${fileIndex}-${sheetIndex}`,
@@ -466,6 +492,7 @@
                     }
                 };
 
+                let rangeControls = null;
                 const chartInstance = new Chart(
                     canvas.getContext('2d'),
                     {
@@ -477,7 +504,7 @@
                             fixedYAxisPlugin
                         ],
                         options: {
-                            responsive: false,
+                            responsive: true,
                             maintainAspectRatio: false,
                             animation: false,
                             parsing: false,
@@ -532,11 +559,37 @@
                                         pinch: {
                                             enabled: true
                                         },
-                                        mode: 'x'
+                                        mode: 'x',
+                                        onZoomComplete: () => rangeControls?.sync()
                                     },
                                     pan: {
                                         enabled: true,
-                                        mode: 'x'
+                                        mode: 'x',
+                                        onPanComplete: () => rangeControls?.sync()
+                                    }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        title(items) {
+                                            const point = items[0]?.raw;
+                                            if (!point) return '';
+                                            const coordinate = isTimeAxis
+                                                ? new Date(point.x).toLocaleString('ja-JP')
+                                                : `${sheet.x_type === 'sampling' ? 'sampling_time' : '行番号'}: ${point.x}`;
+                                            return [
+                                                file.filename,
+                                                ...(sheet.sheet_name ? [`シート: ${sheet.sheet_name}`] : []),
+                                                coordinate
+                                            ];
+                                        },
+                                        label(context) {
+                                            const rawValue = context.raw?.y;
+                                            const value = Number(rawValue);
+                                            const formatted = rawValue != null && Number.isFinite(value)
+                                                ? value.toLocaleString('ja-JP', { maximumFractionDigits: 5 })
+                                                : '—';
+                                            return `${context.dataset.label}: ${formatted}`;
+                                        }
                                     }
                                 }
                             }
@@ -544,138 +597,16 @@
                     }
                 );
 
-                /*
-                 * Chart.jsのズームは，x軸がすでにデータ全範囲を表示していると，
-                 * それ以上の縮小ができない．しかし，Canvasが横長の場合は，
-                 * ブラウザ上では全範囲を1画面で確認できない．
-                 *
-                 * そこで，x軸が全範囲へ戻った後のホイール縮小では，
-                 * Canvasの横幅そのものを縮小する．最小幅まで縮小すると，
-                 * StartからEndまでを横スクロールなしで1画面に表示できる．
-                 */
-                const chartHeight = 420;
-                const widthZoomFactor = 1.25;
-
-                function isDisplayingFullXRange() {
-                    const xAxis = chartInstance.scales?.x;
-                    if (!xAxis) {
-                        return false;
-                    }
-
-                    const fullRange = Math.max(1, dataMax - dataMin);
-                    const tolerance = Math.max(1, fullRange * 1e-8);
-
-                    return (
-                        Math.abs(Number(xAxis.min) - dataMin) <= tolerance &&
-                        Math.abs(Number(xAxis.max) - dataMax) <= tolerance
-                    );
-                }
-
-                function resizePreviewChartWidth(nextWidth, clientX) {
-                    const viewportWidth = Math.max(
-                        minimumChartWidth,
-                        scrollContainer.clientWidth || minimumChartWidth
-                    );
-
-                    const clampedWidth = Math.max(
-                        viewportWidth,
-                        Math.min(
-                            maximumChartWidth,
-                            Math.round(nextWidth)
-                        )
-                    );
-
-                    if (Math.abs(clampedWidth - currentChartWidth) < 1) {
-                        return;
-                    }
-
-                    const containerRect =
-                        scrollContainer.getBoundingClientRect();
-                    const anchorInViewport = Number.isFinite(clientX)
-                        ? Math.max(
-                            0,
-                            Math.min(
-                                viewportWidth,
-                                clientX - containerRect.left
-                            )
-                        )
-                        : viewportWidth / 2;
-
-                    const oldWidth = currentChartWidth;
-                    const oldScrollLeft = scrollContainer.scrollLeft;
-                    const anchorInContent =
-                        oldScrollLeft + anchorInViewport;
-                    const widthRatio = clampedWidth / oldWidth;
-
-                    currentChartWidth = clampedWidth;
-                    chartInner.style.width = `${clampedWidth}px`;
-                    chartInner.style.minWidth = `${clampedWidth}px`;
-                    canvas.style.width = `${clampedWidth}px`;
-
-                    chartInstance.resize(
-                        clampedWidth,
-                        chartHeight
-                    );
-
-                    const nextScrollLeft =
-                        anchorInContent * widthRatio - anchorInViewport;
-                    const maxScrollLeft = Math.max(
-                        0,
-                        clampedWidth - viewportWidth
-                    );
-
-                    scrollContainer.scrollLeft = Math.max(
-                        0,
-                        Math.min(maxScrollLeft, nextScrollLeft)
-                    );
-                }
-
-                canvas.addEventListener(
-                    'wheel',
-                    event => {
-                        /*
-                         * deltaY > 0：縮小
-                         * x軸が全範囲なら，Canvas幅を縮める．
-                         */
-                        if (
-                            event.deltaY > 0 &&
-                            isDisplayingFullXRange() &&
-                            currentChartWidth > minimumChartWidth + 1
-                        ) {
-                            event.preventDefault();
-                            event.stopImmediatePropagation();
-
-                            resizePreviewChartWidth(
-                                currentChartWidth / widthZoomFactor,
-                                event.clientX
-                            );
-                            return;
-                        }
-
-                        /*
-                         * deltaY < 0：拡大
-                         * Canvas幅が縮小済みなら，先に詳細表示幅へ戻す．
-                         * 元の幅へ戻った後は，Chart.jsの通常ズームへ渡す．
-                         */
-                        if (
-                            event.deltaY < 0 &&
-                            isDisplayingFullXRange() &&
-                            currentChartWidth < maximumChartWidth - 1
-                        ) {
-                            event.preventDefault();
-                            event.stopImmediatePropagation();
-
-                            resizePreviewChartWidth(
-                                currentChartWidth * widthZoomFactor,
-                                event.clientX
-                            );
-                        }
-                    },
-                    {
-                        capture: true,
-                        passive: false
-                    }
-                );
+                rangeControls = global.VitBudsChartRangeControls?.attach({
+                    chart: chartInstance,
+                    domainMin: dataMin,
+                    domainMax: dataMax,
+                    scrollbar: rangeScrollbar,
+                    resetButton: resetZoomButton,
+                    formatValue: value => isTimeAxis
+                        ? new Date(value).toLocaleString('ja-JP')
+                        : `${sheet.x_type === 'sampling' ? 'sampling_time' : '行番号'} ${Number(value).toLocaleString('ja-JP')}`
+                });
 
                 // 列表示ON/OFF
                 if (columnSelector) {

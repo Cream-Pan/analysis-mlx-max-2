@@ -120,7 +120,8 @@ button:hover {
   margin: 1.25em 0 1.75em;
 }
 
-.ppg-prv-chart-controls {
+.ppg-prv-chart-controls,
+.file-chart-controls {
   display: flex;
   align-items: center;
   gap: 0.6em;
@@ -141,7 +142,8 @@ button:hover {
   font: inherit;
 }
 
-.ppg-prv-chart-controls button {
+.ppg-prv-chart-controls button,
+.file-chart-controls button {
   padding: 0.4em 0.7em;
   border: 1px solid #aaa;
   border-radius: 4px;
@@ -151,7 +153,8 @@ button:hover {
   cursor: pointer;
 }
 
-.ppg-prv-chart-controls button:hover {
+.ppg-prv-chart-controls button:hover,
+.file-chart-controls button:hover {
   background: #ededed;
 }
 
@@ -165,7 +168,7 @@ button:hover {
   background: #fff;
 }
 
-.ppg-prv-scrollbar {
+.chart-range-scrollbar {
   height: 20px;
   margin: 0.25em 0.8em 0.5em;
   cursor: pointer;
@@ -173,16 +176,16 @@ button:hover {
   user-select: none;
 }
 
-.ppg-prv-scrollbar[hidden] {
+.chart-range-scrollbar[hidden] {
   display: none;
 }
 
-.ppg-prv-scrollbar:focus-visible {
+.chart-range-scrollbar:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
 }
 
-.ppg-prv-scrollbar-track {
+.chart-range-scrollbar-track {
   position: relative;
   top: 5px;
   height: 10px;
@@ -192,7 +195,7 @@ button:hover {
   box-sizing: border-box;
 }
 
-.ppg-prv-scrollbar-thumb {
+.chart-range-scrollbar-thumb {
   position: absolute;
   top: 0;
   height: 100%;
@@ -203,11 +206,11 @@ button:hover {
   touch-action: none;
 }
 
-.ppg-prv-scrollbar-thumb:hover {
+.chart-range-scrollbar-thumb:hover {
   background: #475569;
 }
 
-.ppg-prv-scrollbar-thumb:active {
+.chart-range-scrollbar-thumb:active {
   cursor: grabbing;
 }
 
@@ -248,7 +251,7 @@ button:hover {
 
 .file-chart-scroll {
   width: 100%;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   margin: 0.8em 0 1.5em;
   border: 1px solid #ddd;
@@ -258,29 +261,21 @@ button:hover {
 
 .file-chart-inner {
   position: relative;
-  min-width: 900px;
+  width: 100%;
+  min-width: 0;
   height: 420px;
 }
 
 .file-chart-scroll canvas {
   display: block;
-  max-width: none !important;
-  max-height: none !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
 }
 
-.file-chart-scroll{
-  overflow-x:auto;
-  overflow-y:hidden;
-  width:100%;
+.file-chart-controls {
+  margin: 0.5em 0 0;
 }
 
-.file-chart-inner{
-  height:420px;
-}
-
-.file-chart-scroll canvas{
-  max-width:none!important;
-}
 
 .table-scroll {
   width: 100%;
