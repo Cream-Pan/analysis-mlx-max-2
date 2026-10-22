@@ -16,6 +16,7 @@ Excel / CSV 形式の計測データを読み込み，**MLX90632** と **MAX3010
 6.  [セットアップ](#セットアップ)
 7.  [実行方法](#実行方法)
 8.  [設計上の工夫](#設計上の工夫)
+9.  [解析方法の詳細](#解析方法の詳細)
 
 ## 概要
 
@@ -35,11 +36,26 @@ Excel / CSV 形式の計測データを読み込み，**MLX90632** と **MAX3010
     PPG と加速度から Motion Artifact
     を評価し，HR利用可能率や精度指標を算出する．
 -   **PPG脈波解析**\
-    ログのタスク時刻，または指定した時間区間ごとに脈波ピークを検出し，NN間隔とHRV指標を算出する．
+    ログのタスク時刻，または指定した時間区間を30秒ごとに分け，HR，RMSSD，SDNN，pPPI50を算出する．表にはタスクごとの平均値を示す．
 -   **ファイル内容表示**\
     CSV / Excel データを時間軸または行番号で可視化する．
 
 解析結果は PNG 保存できる．
+
+各機能の入力条件，解析手順，出力値，品質判定，制約は，次の説明書にまとめている．
+
+## 解析方法の詳細
+
+| 機能 | 説明 |
+| --- | --- |
+| ファイル内容表示 | [ファイル内容表示の方法](docs/file-preview.md) |
+| MLX評価 | [MLX評価の方法](docs/mlx-evaluation.md) |
+| MLX修正後評価 | [MLX修正後評価の方法](docs/mlx-reevaluation.md) |
+| MAX評価 | [MAX評価の方法](docs/max-evaluation.md) |
+| PPG→HR変換 | [PPG→HR変換の方法](docs/ppg-to-hr.md) |
+| PPG解析 | [PPG解析の方法](docs/ppg-analysis.md) |
+| PPG＋ACC解析 | [PPG＋ACC解析の方法](docs/ppg-acc-analysis.md) |
+| PPG脈波解析 | [PPG脈波解析の方法](docs/ppg-prv-analysis.md) |
 
 ------------------------------------------------------------------------
 
@@ -224,8 +240,18 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 │   ├── max_service.py
 │   ├── hr_compare_service.py
 │   ├── ppg_service.py
+│   ├── ppg_prv_service.py
 │   ├── ppg_acc_service.py
 │   └── security.py
+├── docs/
+│   ├── file-preview.md
+│   ├── mlx-evaluation.md
+│   ├── mlx-reevaluation.md
+│   ├── max-evaluation.md
+│   ├── ppg-to-hr.md
+│   ├── ppg-analysis.md
+│   ├── ppg-acc-analysis.md
+│   └── ppg-prv-analysis.md
 ├── tests/
 │   ├── test_app_security.py
 │   ├── test_input_validation.py
