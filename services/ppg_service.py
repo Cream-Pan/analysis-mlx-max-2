@@ -91,7 +91,7 @@ def load_ppg_raw_csv(f_obj):
         elapsed_col: "SensorElapsed_ms"
     })
 
-def load_ppg_wave_csv(f_obj):
+def load_ppg_wave_csv(f_obj, filename=None):
     wave_cfg = config["ppg_columns"]["wave_csv"]
     time_col = wave_cfg["time"]
     ir_col = wave_cfg["ir"]
@@ -101,11 +101,17 @@ def load_ppg_wave_csv(f_obj):
     has_acceleration = all(col in available_columns for col in accel_cols)
     elapsed_col = raw_cfg["elapsed_ms"]
     has_sensor_elapsed = elapsed_col in available_columns
+    hr_col = config["ppg_columns"]["hr_csv"]["hr"]
+    has_precomputed_hr = str(filename or "").lower().endswith("_hr.csv")
+    if has_precomputed_hr and hr_col not in available_columns:
+        raise ValueError(f"{filename} は *_HR.csv ですが，{hr_col} 列がありません")
     usecols = [time_col, ir_col]
     if has_acceleration:
         usecols.extend(accel_cols)
     if has_sensor_elapsed:
         usecols.append(elapsed_col)
+    if has_precomputed_hr:
+        usecols.append(hr_col)
 
     df = read_uploaded_csv(
         f_obj,
@@ -119,6 +125,8 @@ def load_ppg_wave_csv(f_obj):
             df[col] = pd.to_numeric(df[col], errors="coerce")
     if has_sensor_elapsed:
         df[elapsed_col] = pd.to_numeric(df[elapsed_col], errors="coerce")
+    if has_precomputed_hr:
+        df[hr_col] = pd.to_numeric(df[hr_col], errors="coerce")
 
     required_values = [time_col, ir_col]
     if has_sensor_elapsed:
@@ -140,6 +148,8 @@ def load_ppg_wave_csv(f_obj):
         time_col: "RecvJST",
         ir_col: "IR_Value"
     }
+    if has_precomputed_hr:
+        rename_columns[hr_col] = "HR_BPM"
     if has_acceleration:
         rename_columns.update({
             raw_cfg["accel_x"]: "Accel_X_mg",

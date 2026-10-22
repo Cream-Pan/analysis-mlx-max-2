@@ -31,37 +31,41 @@
             return;
         }
 
-        html += '<p>タスク開始時刻を基準に1分ごとに解析します．60秒未満の残余区間はスペクトルHRのみを表示します．品質基準は暫定値です．安静との差は算出しません．</p>';
+        html += '<p>タスク開始時刻を基準に30秒ごとに解析します．グラフは各30秒窓の値を表示し，表はタスクごとの平均です．平均は品質判定が「採用」または「注意付き採用」の窓から算出します．*_HR.csvではHR_BPM列を使い，それ以外のCSVではIR_ValueからPPG→HR変換を実行します．RMSSD，SDNN，pPPI50はIR_Valueから検出した脈波間隔で算出します．30秒未満の残余区間は平均とグラフの対象外です．</p>';
         const rowsByFile = new Map();
         result.data.forEach(row => {
             const name = row.filename || 'ファイル名なし';
             if (!rowsByFile.has(name)) rowsByFile.set(name, []);
             rowsByFile.get(name).push(row);
         });
+        const summariesByFile = new Map();
+        (Array.isArray(result.task_summary) ? result.task_summary : []).forEach(summary => {
+            const name = summary.filename || 'ファイル名なし';
+            if (!summariesByFile.has(name)) summariesByFile.set(name, []);
+            summariesByFile.get(name).push(summary);
+        });
 
         const graphMetrics = {
+            hr_bpm: { label: 'HR', unit: 'bpm', digits: 1 },
             rmssd_ms: { label: 'RMSSD', unit: 'ms', digits: 1 },
-            pppi50_pct: { label: 'pPPI50', unit: '%', digits: 1 },
-            mean_hr_bpm: { label: 'PPI由来HR', unit: 'bpm', digits: 1 },
-            spectral_hr_bpm: { label: 'スペクトルHR', unit: 'bpm', digits: 1 },
-            mean_ppi_ms: { label: '平均PPI', unit: 'ms', digits: 1 },
-            accel_rms_g: { label: 'ACC RMS', unit: 'g', digits: 4 }
+            sdnn_ms: { label: 'SDNN', unit: 'ms', digits: 1 },
+            pppi50_pct: { label: 'pPPI50', unit: '%', digits: 1 }
         };
-        const hasMinuteRows = result.data.some(row => row.window_kind === '1分');
-        if (hasMinuteRows) {
+        const hasThirtySecondRows = result.data.some(row => row.window_kind === '30秒');
+        if (hasThirtySecondRows) {
             const metricOptions = Object.entries(graphMetrics).map(([key, metric]) =>
-                `<option value="${key}"${key === 'rmssd_ms' ? ' selected' : ''}>${escapeHtml(metric.label)}（${escapeHtml(metric.unit)}）</option>`
+                `<option value="${key}"${key === 'hr_bpm' ? ' selected' : ''}>${escapeHtml(metric.label)}（${escapeHtml(metric.unit)}）</option>`
             ).join('');
             html += `<section class="ppg-prv-chart-section">
-                <h4>1分ごとの推移</h4>
-                <p>品質判定が「採用」または「注意付き採用」の1分窓を表示します．除外窓は欠損として扱います．ホイール／ピンチで拡大し，ドラッグまたは下のスクロールバーで左右に移動できます．</p>
+                <h4>30秒ごとの推移</h4>
+                <p>HR，RMSSD，SDNN，pPPI50の30秒ごとの推移です．品質判定が「採用」または「注意付き採用」の窓を表示し，除外窓は欠損として扱います．ホイール／ピンチで拡大し，ドラッグまたは下のスクロールバーで左右に移動できます．</p>
                 <div class="ppg-prv-chart-controls screenshot-exclude" data-html2canvas-ignore="true">
                     <label for="${uniqueId}-metric">表示項目</label>
                     <select id="${uniqueId}-metric">${metricOptions}</select>
                     <button type="button" class="ppg-prv-reset-zoom">表示範囲をリセット</button>
                 </div>
                 <div class="ppg-prv-chart-container">
-                    <canvas id="${uniqueId}-chart" aria-label="1分ごとの指標推移"></canvas>
+                    <canvas id="${uniqueId}-chart" aria-label="30秒ごとの指標推移"></canvas>
                 </div>
                 <div class="ppg-prv-scrollbar screenshot-exclude" data-html2canvas-ignore="true"
                     role="scrollbar" aria-label="グラフの表示時刻を左右に移動"
@@ -76,50 +80,30 @@
         }
 
         rowsByFile.forEach((rows, filename) => {
-            rows.sort((a, b) => String(a.start_time).localeCompare(String(b.start_time))
-                || (a.window_kind === '1分' ? -1 : 1));
+            const summaries = (summariesByFile.get(filename) || [])
+                .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
             html += `<h4>${escapeHtml(filename)}</h4>
                 <div class="table-responsive"><table class="ppg-prv-results">
                 <thead><tr>
-                    <th>タスク／窓</th><th>品質判定</th><th>開始</th><th>終了</th>
-                    <th>有効PPG窓</th><th>有効PPI</th><th>スペクトルHR</th>
-                    <th>平均PPI</th><th>PPI由来HR</th><th>RMSSD</th><th>pPPI50</th>
-                    <th>ACC RMS</th><th>ACC主周波数</th><th>PPG–ACC重複</th><th>低体動窓</th>
-                    <th>HR急変警告</th>
-                    <th>左右差（右−左）</th><th>LF</th><th>HF</th><th>LF/HF・備考</th>
+                    <th>タスク</th><th>開始</th><th>終了</th><th>平均対象窓<br>（有効／全30秒窓）</th>
+                    <th>HR平均</th><th>RMSSD平均</th><th>SDNN平均</th><th>pPPI50平均</th>
                 </tr></thead><tbody>`;
 
-            rows.forEach(row => {
-                const validPpg = row.valid_spectral_window_count == null
-                    ? '—' : `${row.valid_spectral_window_count}/${row.spectral_window_count ?? 0} (${number(row.valid_spectral_pct, 1, ' %')})`;
-                const validPpi = number(row.valid_ppi_pct, 1, ' %');
-                const delta = row.right_minus_left
-                    ? `HR ${number(row.right_minus_left.mean_hr_bpm, 2)} bpm<br>`
-                        + `PPI ${number(row.right_minus_left.mean_ppi_ms, 1)} ms<br>`
-                        + `RMSSD ${number(row.right_minus_left.rmssd_ms, 1)} ms<br>`
-                        + `pPPI50 ${number(row.right_minus_left.pppi50_pct, 1, ' %')}`
-                    : '—';
-                const status = row.quality_status || row.status || '—';
-                const note = [row.frequency_status, row.message]
-                    .filter(Boolean).join('；');
+            const averageCell = (summary, metric, digits, suffix) => {
+                const value = summary[`mean_${metric}`];
+                const count = summary[`${metric}_count`] || 0;
+                return `<td>${number(value, digits, suffix)}<br><small>n=${count}</small></td>`;
+            };
+            summaries.forEach(summary => {
                 html += `<tr>
-                    <td>${escapeHtml(row.task)}<br>${escapeHtml(row.window_kind)} ${row.window_index ?? ''}</td>
-                    <td>${escapeHtml(status)}</td>
-                    <td>${escapeHtml(row.start_time)}</td><td>${escapeHtml(row.end_time)}</td>
-                    <td>${validPpg}</td><td>${validPpi}</td>
-                    <td>${number(row.spectral_hr_bpm, 1, ' bpm')}</td>
-                    <td>${number(row.mean_ppi_ms, 1, ' ms')}</td>
-                    <td>${number(row.mean_hr_bpm, 1, ' bpm')}</td>
-                    <td>${number(row.rmssd_ms, 1, ' ms')}</td>
-                    <td>${number(row.pppi50_pct, 1, ' %')}</td>
-                    <td>${number(row.accel_rms_g, 4, ' g')}</td>
-                    <td>${number(row.accel_dominant_hz, 2, ' Hz')}</td>
-                    <td>${number(row.ppg_acc_overlap_pct, 1, ' %')}</td>
-                    <td>${number(row.low_motion_pct, 1, ' %')}</td>
-                    <td>${row.hr_continuity_warning ? `あり（${row.hr_jump_count ?? 0}回）` : 'なし'}</td>
-                    <td>${delta}</td>
-                    <td>${number(row.lf_power, 5)}</td><td>${number(row.hf_power, 5)}</td>
-                    <td>${number(row.lf_hf, 3)}<br>${escapeHtml(note)}</td>
+                    <td>${escapeHtml(summary.task)}</td>
+                    <td>${escapeHtml(summary.start_time)}</td>
+                    <td>${escapeHtml(summary.end_time)}</td>
+                    <td>${summary.included_window_count}/${summary.window_count}</td>
+                    ${averageCell(summary, 'hr_bpm', 1, ' bpm')}
+                    ${averageCell(summary, 'rmssd_ms', 1, ' ms')}
+                    ${averageCell(summary, 'sdnn_ms', 1, ' ms')}
+                    ${averageCell(summary, 'pppi50_pct', 1, ' %')}
                 </tr>`;
             });
             html += '</tbody></table></div>';
@@ -133,7 +117,7 @@
         const metricSelect = resultEl.querySelector('#' + uniqueId + '-metric');
         const resetZoomButton = resultEl.querySelector('.ppg-prv-reset-zoom');
         if (chartCanvas && metricSelect && global.Chart) {
-            const colors = ['#2563eb', '#dc2626', '#059669', '#9333ea', '#d97706', '#0891b2'];
+            const colors = ['#2563eb', '#dc2626', '#059669', '#9333ea'];
             const emptyMessage = resultEl.querySelector('.ppg-prv-chart-empty');
             const taskSpans = result.data
                 .map(row => ({
@@ -353,7 +337,7 @@
                 chart.data.datasets = [...rowsByFile.entries()]
                     .map(([filename, rows], index) => {
                         const points = rows
-                            .filter(row => row.window_kind === '1分')
+                            .filter(row => row.window_kind === '30秒')
                             .sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)))
                             .map(row => {
                                 const value = Number(row[metricSelect.value]);

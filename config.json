@@ -96,7 +96,7 @@
     },
     "ppg_hr_analysis": {
       "label": "PPG脈波解析",
-      "description": "IR_Value と RecvJST を含む CSV を 1 つ以上使用します．",
+      "description": "IR_Value と RecvJST を含む CSV を 1 つ以上使用します．末尾が _HR.csv の場合は HR_BPM 列も使用します．",
       "fixed_files": [],
       "file_rules": [
         {

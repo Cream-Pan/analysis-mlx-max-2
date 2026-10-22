@@ -8,11 +8,15 @@ from scipy.interpolate import interp1d
 from scipy.signal import butter, find_peaks, sosfiltfilt, welch
 
 from services.log_service import load_log_tasks
-from services.ppg_service import load_ppg_wave_csv, resolve_ppg_wave_files
+from services.ppg_service import (
+    estimate_hr_and_waveform,
+    load_ppg_wave_csv,
+    resolve_ppg_wave_files,
+)
 
 
-WINDOW_SEC = 60
-SHORT_PPI_LIMIT_SEC = 60
+WINDOW_SEC = 30
+SHORT_PPI_LIMIT_SEC = 30
 PPG_FREQ_BAND = (0.5, 2.5)  # 30–150 bpm
 PPI_BOUNDS_SEC = (0.4, 2.0)  # 30–150 bpm
 QUALITY_ACCEPT = 0.90
@@ -108,6 +112,14 @@ def _accel_rms(values):
     return float(np.sqrt(np.mean(np.square(values))))
 
 
+def _mean_valid_hr(frame):
+    if "HR_BPM" not in frame.columns:
+        return None
+    values = pd.to_numeric(frame["HR_BPM"], errors="coerce").to_numpy(dtype=float)
+    valid = values[np.isfinite(values) & (values >= 30.0) & (values <= 220.0)]
+    return float(np.mean(valid)) if len(valid) else None
+
+
 def _dominant_frequency(values, fs, low_hz=0.5, high_hz=10.0):
     if values is None or len(values) < int(fs * 2):
         return None
@@ -120,7 +132,8 @@ def _analyse_prv(frame, fs):
     signal = _filter_signal(frame["IR_Value"].to_numpy(dtype=float), fs, 0.5, 4.0)
     if signal is None:
         return {"ppi_count": 0, "valid_ppi_pct": 0.0, "mean_ppi_ms": None,
-                "mean_hr_bpm": None, "rmssd_ms": None, "pppi50_pct": None,
+                "mean_hr_bpm": None, "rmssd_ms": None, "sdnn_ms": None,
+                "pppi50_pct": None,
                 "_ppi_times": None, "_ppi_values": None}
     distance = max(1, int(round(fs * PPI_BOUNDS_SEC[0])))
     prominence = max(float(np.std(signal) * 0.25), 1e-9)
@@ -133,6 +146,7 @@ def _analyse_prv(frame, fs):
     adjacent = valid_mask[:-1] & valid_mask[1:] if len(valid_mask) > 1 else np.array([], dtype=bool)
     differences = np.abs(np.diff(all_ppi))[adjacent]
     rmssd = float(np.sqrt(np.mean(np.square(np.diff(all_ppi)[adjacent]))) * 1000) if len(differences) else None
+    sdnn = float(np.std(ppi, ddof=1) * 1000) if len(ppi) > 1 else None
     pppi50 = float(np.mean(differences > 0.05) * 100) if len(differences) else None
     ppi_times = time_sec[peaks][1:][valid_mask] if len(ppi) else None
     return {
@@ -141,6 +155,7 @@ def _analyse_prv(frame, fs):
         "mean_ppi_ms": float(np.mean(ppi) * 1000) if len(ppi) else None,
         "mean_hr_bpm": float(60.0 / np.mean(ppi)) if len(ppi) else None,
         "rmssd_ms": rmssd,
+        "sdnn_ms": sdnn,
         "pppi50_pct": pppi50,
         "_ppi_times": ppi_times,
         "_ppi_values": ppi,
@@ -223,10 +238,13 @@ def _segment_rows(frame, task, task_start, task_end, filename, acc_threshold):
         duration = (end - cursor).total_seconds()
         row = {
             "filename": filename, "task": task,
-            "window_kind": "1分" if duration >= WINDOW_SEC else "短区間",
+            "task_start_time": pd.Timestamp(task_start).isoformat(),
+            "task_end_time": pd.Timestamp(task_end).isoformat(),
+            "window_kind": "30秒" if duration >= WINDOW_SEC else "短区間",
             "window_index": index,
             "start_time": cursor.isoformat(), "end_time": end.isoformat(),
             "sample_count": int(len(segment)), "duration_sec": float(duration),
+            "hr_bpm": _mean_valid_hr(segment),
             "paired_filename": None, "right_minus_left": None,
             "hr_jump_count": 0, "hr_continuity_warning": False,
             "lf_power": None, "hf_power": None, "lf_hf": None,
@@ -292,9 +310,10 @@ def _segment_rows(frame, task, task_start, task_end, filename, acc_threshold):
                 row["message"] = None if status != "除外" else "PPG品質または生理的PPI率が暫定基準を下回りました"
             else:
                 row.update({"quality_status": "短区間", "status": "spectral_only",
-                            "message": "60秒未満のためスペクトルHRのみを表示し，PRV指標は算出しません",
+                            "message": "30秒未満のためPRV指標は算出しません",
                             "ppi_count": None, "valid_ppi_pct": None, "mean_ppi_ms": None,
-                            "mean_hr_bpm": None, "rmssd_ms": None, "pppi50_pct": None,
+                            "mean_hr_bpm": None, "rmssd_ms": None, "sdnn_ms": None,
+                            "pppi50_pct": None,
                             "nn50": None, "pnn50": None})
         else:
             row.update({"quality_status": "除外", "status": "error",
@@ -302,7 +321,8 @@ def _segment_rows(frame, task, task_start, task_end, filename, acc_threshold):
                         "valid_spectral_window_count": 0, "valid_spectral_pct": 0.0,
                         "spectral_hr_bpm": None, "ppi_count": 0, "valid_ppi_pct": 0.0,
                         "mean_ppi_ms": None, "mean_hr_bpm": None,
-                        "rmssd_ms": None, "pppi50_pct": None, "nn50": None, "pnn50": None,
+                        "rmssd_ms": None, "sdnn_ms": None, "pppi50_pct": None,
+                        "nn50": None, "pnn50": None,
                         "accel_rms_g": None, "ppg_acc_overlap_pct": None, "low_motion_pct": None})
         rows.append(row)
         cursor, index = end, index + 1
@@ -398,7 +418,7 @@ def _bilateral_pairs(filenames):
 def _attach_bilateral_deltas(rows, filenames):
     by_file = {name: {} for name in filenames}
     for row in rows:
-        if row.get("window_kind") not in {"1分", "5分"}:
+        if row.get("window_kind") not in {"30秒", "5分"}:
             continue
         key = (row["task"], row["window_kind"], row["start_time"], row["end_time"])
         by_file.setdefault(row["filename"], {})[key] = row
@@ -416,14 +436,59 @@ def _attach_bilateral_deltas(rows, filenames):
             rrow["right_minus_left"] = delta
 
 
+def _task_summary_rows(rows):
+    """Summarize accepted 30-second windows as per-task arithmetic means."""
+    grouped = {}
+    for row in rows:
+        key = (
+            row.get("filename"), row.get("task"),
+            row.get("task_start_time", row.get("start_time")),
+            row.get("task_end_time", row.get("end_time")),
+        )
+        grouped.setdefault(key, []).append(row)
+
+    summaries = []
+    for (filename, task, task_start, task_end), task_rows in grouped.items():
+        windows = [row for row in task_rows if row.get("window_kind") == "30秒"]
+        included = [
+            row for row in windows
+            if row.get("quality_status") in {"採用", "注意付き採用"}
+        ]
+        summary = {
+            "filename": filename,
+            "task": task,
+            "start_time": task_start,
+            "end_time": task_end,
+            "window_count": len(windows),
+            "included_window_count": len(included),
+            "excluded_window_count": len(windows) - len(included),
+        }
+        for metric in ("hr_bpm", "rmssd_ms", "sdnn_ms", "pppi50_pct"):
+            values = [
+                float(row[metric]) for row in included
+                if row.get(metric) is not None
+                and np.isfinite(float(row[metric]))
+            ]
+            summary[f"mean_{metric}"] = float(np.mean(values)) if values else None
+            summary[f"{metric}_count"] = len(values)
+        summaries.append(summary)
+
+    return sorted(
+        summaries,
+        key=lambda row: (str(row["filename"]), str(row["start_time"])),
+    )
+
+
 def perform_ppg_wave_hrv_analysis(uploaded_files, has_log, interval_min,
                                   analysis_start_offset_sec=0, analysis_duration_sec=0):
     try:
         filenames = resolve_ppg_wave_files(uploaded_files)
         rows = []
         for filename in filenames:
-            frame = load_ppg_wave_csv(uploaded_files[filename])
+            frame = load_ppg_wave_csv(uploaded_files[filename], filename=filename)
             frame = frame.drop_duplicates(subset=["RecvJST"], keep="first").reset_index(drop=True)
+            if "HR_BPM" not in frame.columns:
+                frame["HR_BPM"] = estimate_hr_and_waveform(frame, fs=_sampling_rate(frame))
             segments = _file_segments(uploaded_files, filename, frame, has_log, interval_min,
                                       analysis_start_offset_sec, analysis_duration_sec)
             if not segments:
@@ -446,10 +511,10 @@ def perform_ppg_wave_hrv_analysis(uploaded_files, has_log, interval_min,
             acc_threshold = float(np.percentile(rms_values, 25)) if rms_values else None
             for task, start, end in segments:
                 rows.extend(_segment_rows(frame, task, start, end, filename, acc_threshold))
-            rows.extend(_five_minute_rows(frame, segments, filename, acc_threshold))
         _attach_bilateral_deltas(rows, filenames)
         return {"analysis_type": "ppg_hr_analysis", "status": "success",
-                "title": "PPG脈波解析結果（PRV・タスク別）", "data": rows}
+                "title": "PPG脈波解析結果（HR・PRV）", "data": rows,
+                "task_summary": _task_summary_rows(rows)}
     except Exception as error:
         return {"analysis_type": "ppg_hr_analysis", "status": "error",
                 "message": f"PPG脈波解析エラー: {str(error)}"}
