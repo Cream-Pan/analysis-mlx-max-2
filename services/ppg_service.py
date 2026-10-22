@@ -91,27 +91,72 @@ def load_ppg_raw_csv(f_obj):
         elapsed_col: "SensorElapsed_ms"
     })
 
-def load_ppg_wave_csv(f_obj):
+def load_ppg_wave_csv(f_obj, filename=None):
     wave_cfg = config["ppg_columns"]["wave_csv"]
     time_col = wave_cfg["time"]
     ir_col = wave_cfg["ir"]
+    raw_cfg = config["ppg_columns"]["raw_csv"]
+    accel_cols = [raw_cfg["accel_x"], raw_cfg["accel_y"], raw_cfg["accel_z"]]
+    available_columns = read_uploaded_csv_columns(f_obj)
+    has_acceleration = all(col in available_columns for col in accel_cols)
+    elapsed_col = raw_cfg["elapsed_ms"]
+    has_sensor_elapsed = elapsed_col in available_columns
+    hr_col = config["ppg_columns"]["hr_csv"]["hr"]
+    has_precomputed_hr = str(filename or "").lower().endswith("_hr.csv")
+    if has_precomputed_hr and hr_col not in available_columns:
+        raise ValueError(f"{filename} は *_HR.csv ですが，{hr_col} 列がありません")
+    usecols = [time_col, ir_col]
+    if has_acceleration:
+        usecols.extend(accel_cols)
+    if has_sensor_elapsed:
+        usecols.append(elapsed_col)
+    if has_precomputed_hr:
+        usecols.append(hr_col)
 
     df = read_uploaded_csv(
         f_obj,
-        usecols=[time_col, ir_col]
+        usecols=usecols
     )
 
     df[time_col] = parse_datetime_series(df[time_col])
     df[ir_col] = pd.to_numeric(df[ir_col], errors="coerce")
+    if has_acceleration:
+        for col in accel_cols:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if has_sensor_elapsed:
+        df[elapsed_col] = pd.to_numeric(df[elapsed_col], errors="coerce")
+    if has_precomputed_hr:
+        df[hr_col] = pd.to_numeric(df[hr_col], errors="coerce")
 
-    df = df.dropna(subset=[time_col, ir_col]).copy()
+    required_values = [time_col, ir_col]
+    if has_sensor_elapsed:
+        required_values.append(elapsed_col)
+    df = df.dropna(subset=required_values).copy()
     if df.empty:
         raise ValueError("RecvJST と IR_Value が有効なデータがありません")
 
-    df = df.rename(columns={
+    # BLE受信時刻は複数サンプルで重複するため，取得経過時間があればそれを優先する．
+    if has_sensor_elapsed:
+        anchor_time = df[time_col].iloc[0]
+        anchor_elapsed = df[elapsed_col].iloc[0]
+        df[time_col] = anchor_time + pd.to_timedelta(
+            df[elapsed_col] - anchor_elapsed, unit="ms"
+        )
+        df = df.drop(columns=[elapsed_col])
+
+    rename_columns = {
         time_col: "RecvJST",
         ir_col: "IR_Value"
-    })
+    }
+    if has_precomputed_hr:
+        rename_columns[hr_col] = "HR_BPM"
+    if has_acceleration:
+        rename_columns.update({
+            raw_cfg["accel_x"]: "Accel_X_mg",
+            raw_cfg["accel_y"]: "Accel_Y_mg",
+            raw_cfg["accel_z"]: "Accel_Z_mg",
+        })
+    df = df.rename(columns=rename_columns)
 
     df = df.sort_values("RecvJST")
     return df

@@ -116,6 +116,106 @@ button:hover {
     width: 100%;
 }
 
+.ppg-prv-chart-section {
+  margin: 1.25em 0 1.75em;
+}
+
+.ppg-prv-chart-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin: 0.5em 0;
+}
+
+.ppg-prv-chart-controls label {
+  font-weight: bold;
+}
+
+.ppg-prv-chart-controls select {
+  max-width: 100%;
+  padding: 0.4em 0.6em;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+  font: inherit;
+}
+
+.ppg-prv-chart-controls button {
+  padding: 0.4em 0.7em;
+  border: 1px solid #aaa;
+  border-radius: 4px;
+  background: #f7f7f7;
+  color: #333;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ppg-prv-chart-controls button:hover {
+  background: #ededed;
+}
+
+.ppg-prv-chart-container {
+  position: relative;
+  width: 100%;
+  height: 360px;
+  padding: 0.75em;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.ppg-prv-scrollbar {
+  height: 20px;
+  margin: 0.25em 0.8em 0.5em;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.ppg-prv-scrollbar[hidden] {
+  display: none;
+}
+
+.ppg-prv-scrollbar:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.ppg-prv-scrollbar-track {
+  position: relative;
+  top: 5px;
+  height: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #eef1f5;
+  box-sizing: border-box;
+}
+
+.ppg-prv-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 6%;
+  border-radius: 6px;
+  background: #64748b;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ppg-prv-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+.ppg-prv-scrollbar-thumb:active {
+  cursor: grabbing;
+}
+
+.ppg-prv-chart-empty {
+  color: #666;
+  text-align: center;
+}
+
 .result-item th:first-child,
 .result-item td:first-child {
     width: 25%; /* 1列目 (タスク名) の幅 */
