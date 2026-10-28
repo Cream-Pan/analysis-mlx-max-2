@@ -260,11 +260,27 @@
                 const interactionHelp = document.createElement('span');
                 interactionHelp.textContent = 'ホイール／ピンチで拡大，ドラッグまたは下のバーで横移動できます．';
                 chartControls.appendChild(interactionHelp);
+                const regressionLabel = document.createElement('label');
+                regressionLabel.className = 'file-regression-control';
+                const regressionToggle = document.createElement('input');
+                regressionToggle.type = 'checkbox';
+                regressionToggle.checked = false;
+                regressionLabel.appendChild(regressionToggle);
+                regressionLabel.appendChild(
+                    document.createTextNode('回帰式を表示')
+                );
+                chartControls.appendChild(regressionLabel);
                 resultEl.appendChild(chartControls);
 
                 chartLayout.appendChild(fixedAxisContainer);
                 chartLayout.appendChild(scrollContainer);
                 resultEl.appendChild(chartLayout);
+
+                const regressionSummary = document.createElement('div');
+                regressionSummary.className = 'file-regression-summary';
+                regressionSummary.hidden = true;
+                regressionSummary.setAttribute('aria-live', 'polite');
+                resultEl.appendChild(regressionSummary);
 
                 const rangeScrollbar = document.createElement('div');
                 rangeScrollbar.className = 'chart-range-scrollbar screenshot-exclude';
@@ -569,6 +585,7 @@
                                     }
                                 },
                                 tooltip: {
+                                    filter: item => !item.dataset?.isRegression,
                                     callbacks: {
                                         title(items) {
                                             const point = items[0]?.raw;
@@ -591,11 +608,255 @@
                                             return `${context.dataset.label}: ${formatted}`;
                                         }
                                     }
+                                },
+                                legend: {
+                                    labels: {
+                                        filter: (item, chartData) =>
+                                            !chartData.datasets[
+                                                item.datasetIndex
+                                            ]?.isRegression
+                                    }
                                 }
                             }
                         }
                     }
                 );
+
+                const rawDatasetCount = datasets.length;
+                const regressionSegments = hasLogRange
+                    ? taskRows
+                        .map(task => ({
+                            name: String(task.name || 'タスク'),
+                            start: new Date(task.start).getTime(),
+                            end: new Date(task.end).getTime(),
+                            origin: new Date(task.start).getTime()
+                        }))
+                        .filter(segment => (
+                            Number.isFinite(segment.start)
+                            && Number.isFinite(segment.end)
+                            && segment.end > segment.start
+                        ))
+                    : [{
+                        name: '全データ',
+                        start: Number.NEGATIVE_INFINITY,
+                        end: Number.POSITIVE_INFINITY,
+                        origin: isTimeAxis ? dataMin : 0
+                    }];
+
+                const regressionXAxisDescription = isTimeAxis
+                    ? hasLogRange
+                        ? 'x：各タスク開始からの経過時間（分）'
+                        : 'x：記録開始からの経過時間（分）'
+                    : sheet.x_type === 'sampling'
+                        ? 'x：sampling_time'
+                        : 'x：行番号';
+
+                const formatRegressionNumber = value => {
+                    if (!Number.isFinite(value)) return '—';
+                    if (value === 0) return '0';
+                    return Number(value.toPrecision(6)).toString();
+                };
+
+                const calculateLinearFit = (dataset, segment) => {
+                    const points = dataset.data.flatMap(point => {
+                        const rawX = isTimeAxis
+                            ? point.x instanceof Date
+                                ? point.x.getTime()
+                                : new Date(point.x).getTime()
+                            : Number(point.x);
+                        const rawY = point.y;
+                        if (
+                            !Number.isFinite(rawX)
+                            || rawX < segment.start
+                            || rawX > segment.end
+                            || rawY === null
+                            || rawY === undefined
+                            || rawY === ''
+                        ) {
+                            return [];
+                        }
+
+                        const y = Number(rawY);
+                        if (!Number.isFinite(y)) return [];
+                        return [{
+                            rawX,
+                            x: isTimeAxis
+                                ? (rawX - segment.origin) / 60000
+                                : rawX,
+                            y
+                        }];
+                    });
+
+                    if (points.length < 2) {
+                        return {
+                            count: points.length,
+                            error: `有効点が${points.length}件です（2件以上必要）`
+                        };
+                    }
+
+                    const meanX = points.reduce((sum, point) => sum + point.x, 0)
+                        / points.length;
+                    const meanY = points.reduce((sum, point) => sum + point.y, 0)
+                        / points.length;
+                    const varianceX = points.reduce(
+                        (sum, point) => sum + (point.x - meanX) ** 2,
+                        0
+                    );
+
+                    if (!(varianceX > 0)) {
+                        return {
+                            count: points.length,
+                            error: 'xの値に変化がありません'
+                        };
+                    }
+
+                    const covariance = points.reduce(
+                        (sum, point) => sum
+                            + (point.x - meanX) * (point.y - meanY),
+                        0
+                    );
+                    const slope = covariance / varianceX;
+                    const intercept = meanY - slope * meanX;
+                    const varianceY = points.reduce(
+                        (sum, point) => sum + (point.y - meanY) ** 2,
+                        0
+                    );
+                    const residualSumSquares = points.reduce(
+                        (sum, point) => sum
+                            + (point.y - (slope * point.x + intercept)) ** 2,
+                        0
+                    );
+                    const rSquared = varianceY > 0
+                        ? Math.max(0, Math.min(
+                            1,
+                            1 - residualSumSquares / varianceY
+                        ))
+                        : null;
+                    const minX = points.reduce(
+                        (minimum, point) => Math.min(minimum, point.x),
+                        Number.POSITIVE_INFINITY
+                    );
+                    const maxX = points.reduce(
+                        (maximum, point) => Math.max(maximum, point.x),
+                        Number.NEGATIVE_INFINITY
+                    );
+                    const toChartX = value => isTimeAxis
+                        ? new Date(segment.origin + value * 60000)
+                        : value;
+
+                    return {
+                        count: points.length,
+                        slope,
+                        intercept,
+                        rSquared,
+                        line: [minX, maxX].map(x => ({
+                            x: toChartX(x),
+                            y: slope * x + intercept
+                        }))
+                    };
+                };
+
+                const updateRegressionDisplay = () => {
+                    chartInstance.data.datasets.splice(rawDatasetCount);
+                    regressionSummary.replaceChildren();
+                    regressionSummary.hidden = !regressionToggle.checked;
+
+                    if (!regressionToggle.checked) {
+                        chartInstance.update('none');
+                        return;
+                    }
+
+                    const axisDescription = document.createElement('p');
+                    axisDescription.className = 'file-regression-axis';
+                    axisDescription.textContent = regressionXAxisDescription;
+                    regressionSummary.appendChild(axisDescription);
+
+                    const activeDatasetIndices = datasets
+                        .map((_, index) => index)
+                        .filter(index => chartInstance.isDatasetVisible(index));
+
+                    if (activeDatasetIndices.length === 0) {
+                        const note = document.createElement('p');
+                        note.className = 'file-regression-note';
+                        note.textContent = '回帰式を表示する列を選択してください．';
+                        regressionSummary.appendChild(note);
+                        chartInstance.update('none');
+                        return;
+                    }
+
+                    if (hasLogRange && regressionSegments.length === 0) {
+                        const note = document.createElement('p');
+                        note.className = 'file-regression-note';
+                        note.textContent = 'ログにタスク区間がないため，回帰式を算出できません．';
+                        regressionSummary.appendChild(note);
+                        chartInstance.update('none');
+                        return;
+                    }
+
+                    regressionSegments.forEach(segment => {
+                        const section = document.createElement('section');
+                        section.className = 'file-regression-task';
+                        const heading = document.createElement('h6');
+                        heading.textContent = segment.name;
+                        section.appendChild(heading);
+
+                        activeDatasetIndices.forEach(datasetIndex => {
+                            const sourceDataset = chartInstance
+                                .data.datasets[datasetIndex];
+                            const fit = calculateLinearFit(
+                                sourceDataset,
+                                segment
+                            );
+                            const equation = document.createElement('p');
+                            equation.className = fit.line
+                                ? 'file-regression-equation'
+                                : 'file-regression-note';
+                            equation.style.borderLeftColor =
+                                sourceDataset.borderColor;
+
+                            if (!fit.line) {
+                                equation.textContent =
+                                    `${sourceDataset.label}：算出不可（${fit.error}）`;
+                                section.appendChild(equation);
+                                return;
+                            }
+
+                            const interceptText = fit.intercept < 0
+                                ? `− ${formatRegressionNumber(Math.abs(fit.intercept))}`
+                                : `+ ${formatRegressionNumber(fit.intercept)}`;
+                            const rSquaredText = fit.rSquared === null
+                                ? '—'
+                                : formatRegressionNumber(fit.rSquared);
+                            equation.textContent = [
+                                `${sourceDataset.label}：y = ${formatRegressionNumber(fit.slope)}x ${interceptText}`,
+                                `R² = ${rSquaredText}`,
+                                `n = ${fit.count}`
+                            ].join('，');
+                            section.appendChild(equation);
+
+                            chartInstance.data.datasets.push({
+                                label: hasLogRange
+                                    ? `${sourceDataset.label} 回帰線（${segment.name}）`
+                                    : `${sourceDataset.label} 回帰線`,
+                                data: fit.line,
+                                borderColor: sourceDataset.borderColor,
+                                backgroundColor: sourceDataset.borderColor,
+                                borderWidth: 2,
+                                borderDash: [6, 4],
+                                pointRadius: 0,
+                                pointHoverRadius: 0,
+                                pointHitRadius: 0,
+                                fill: false,
+                                spanGaps: true,
+                                isRegression: true
+                            });
+                        });
+
+                        regressionSummary.appendChild(section);
+                    });
+
+                    chartInstance.update('none');
+                };
 
                 rangeControls = global.VitBudsChartRangeControls?.attach({
                     chart: chartInstance,
@@ -631,13 +892,18 @@
                                         .hidden =
                                         !checkbox.checked;
 
-                                    chartInstance.update();
+                                    updateRegressionDisplay();
                                 }
                             );
 
                         }
                     );
                 }
+
+                regressionToggle.addEventListener(
+                    'change',
+                    updateRegressionDisplay
+                );
             });
         });
     }
