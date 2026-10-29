@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const previewColumnsInput = document.getElementById('previewColumns');
     const previewScale = document.getElementById('previewScale');
     const previewScaleWrapper = document.getElementById('preview-scale-wrapper');
+    const previewRegressionInput = document.getElementById('previewRegression');
+    const previewRegressionWrapper = document.getElementById('preview-regression-wrapper');
     const submitButton = uploadForm.querySelector('button[type="submit"]');
     
 
@@ -307,6 +309,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             previewScaleWrapper,
             visible
         );
+
+        setVisible(
+            previewRegressionWrapper,
+            visible
+        );
     }
 
     function syncUiState() {
@@ -390,8 +397,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         return window.VitBudsResultFormatters.metrics.formatMaxMetric(value);
     }
 
-    function displayFilePreview(result) {
-        window.VitBudsFilePreview.display(result, resultDiv);
+    function displayFilePreview(result, showRegression = false) {
+        window.VitBudsFilePreview.display(
+            result,
+            resultDiv,
+            showRegression
+        );
     }
 
     function displayMlxEvaluation(result) {
@@ -418,6 +429,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const selectedType = getSelectedAnalysisType();
         const hasLog = getEffectiveHasLog(selectedType);
+        const showRegression = selectedType === 'show_files'
+            && Boolean(previewRegressionInput?.checked);
         const formData = new FormData();
 
         let previewColumns = [];
@@ -552,7 +565,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         displayPpgHrAnalysis(result);
                         break;
                     case 'show_files':
-                        displayFilePreview(result);
+                        displayFilePreview(result, showRegression);
                         break;
                     case 'mlx_reevaluation':
                         displayMlxEvaluation(result);

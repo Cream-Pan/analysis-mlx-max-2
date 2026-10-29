@@ -76,7 +76,7 @@
         }
     }
 
-    function displayFilePreview(result, resultDiv) {
+    function displayFilePreview(result, resultDiv, showRegression = false) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
 
@@ -260,27 +260,32 @@
                 const interactionHelp = document.createElement('span');
                 interactionHelp.textContent = 'ホイール／ピンチで拡大，ドラッグまたは下のバーで横移動できます．';
                 chartControls.appendChild(interactionHelp);
-                const regressionLabel = document.createElement('label');
-                regressionLabel.className = 'file-regression-control';
-                const regressionToggle = document.createElement('input');
-                regressionToggle.type = 'checkbox';
-                regressionToggle.checked = false;
-                regressionLabel.appendChild(regressionToggle);
-                regressionLabel.appendChild(
-                    document.createTextNode('回帰式を表示')
-                );
-                chartControls.appendChild(regressionLabel);
+                let regressionLinesVisible = true;
+                let regressionLineDatasets = [];
+                let regressionLineToggle = null;
+                if (showRegression) {
+                    regressionLineToggle = document.createElement('button');
+                    regressionLineToggle.type = 'button';
+                    regressionLineToggle.className = 'file-regression-line-toggle';
+                    regressionLineToggle.textContent = '回帰直線を非表示';
+                    regressionLineToggle.setAttribute('aria-label', '回帰直線の表示切替');
+                    regressionLineToggle.setAttribute('aria-pressed', 'true');
+                    chartControls.appendChild(regressionLineToggle);
+                }
                 resultEl.appendChild(chartControls);
 
                 chartLayout.appendChild(fixedAxisContainer);
                 chartLayout.appendChild(scrollContainer);
                 resultEl.appendChild(chartLayout);
 
-                const regressionSummary = document.createElement('div');
-                regressionSummary.className = 'file-regression-summary';
-                regressionSummary.hidden = true;
-                regressionSummary.setAttribute('aria-live', 'polite');
-                resultEl.appendChild(regressionSummary);
+                const regressionSummary = showRegression
+                    ? document.createElement('div')
+                    : null;
+                if (regressionSummary) {
+                    regressionSummary.className = 'file-regression-summary';
+                    regressionSummary.setAttribute('aria-live', 'polite');
+                    resultEl.appendChild(regressionSummary);
+                }
 
                 const rangeScrollbar = document.createElement('div');
                 rangeScrollbar.className = 'chart-range-scrollbar screenshot-exclude';
@@ -610,6 +615,30 @@
                                     }
                                 },
                                 legend: {
+                                    onClick(event, legendItem, legend) {
+                                        const datasetIndex =
+                                            legendItem.datasetIndex;
+                                        const visible = !legend.chart
+                                            .isDatasetVisible(datasetIndex);
+                                        legend.chart.setDatasetVisibility(
+                                            datasetIndex,
+                                            visible
+                                        );
+
+                                        const columnCheckbox =
+                                            columnSelector?.querySelectorAll(
+                                                'input[type="checkbox"]'
+                                            )[datasetIndex];
+                                        if (columnCheckbox) {
+                                            columnCheckbox.checked = visible;
+                                        }
+
+                                        if (showRegression) {
+                                            updateRegressionDisplay();
+                                        } else {
+                                            legend.chart.update();
+                                        }
+                                    },
                                     labels: {
                                         filter: (item, chartData) =>
                                             !chartData.datasets[
@@ -623,7 +652,9 @@
                 );
 
                 const rawDatasetCount = datasets.length;
-                const regressionSegments = hasLogRange
+                const regressionSegments = !showRegression
+                    ? []
+                    : hasLogRange
                     ? taskRows
                         .map(task => ({
                             name: String(task.name || 'タスク'),
@@ -756,15 +787,29 @@
                     };
                 };
 
-                const updateRegressionDisplay = () => {
+                const renderRegressionLines = () => {
                     chartInstance.data.datasets.splice(rawDatasetCount);
-                    regressionSummary.replaceChildren();
-                    regressionSummary.hidden = !regressionToggle.checked;
-
-                    if (!regressionToggle.checked) {
-                        chartInstance.update('none');
-                        return;
+                    if (regressionLinesVisible) {
+                        chartInstance.data.datasets.push(
+                            ...regressionLineDatasets
+                        );
                     }
+                    if (regressionLineToggle) {
+                        regressionLineToggle.textContent = regressionLinesVisible
+                            ? '回帰直線を非表示'
+                            : '回帰直線を表示';
+                        regressionLineToggle.setAttribute(
+                            'aria-pressed',
+                            String(regressionLinesVisible)
+                        );
+                    }
+                    chartInstance.update('none');
+                };
+
+                const updateRegressionDisplay = () => {
+                    if (!showRegression || !regressionSummary) return;
+                    regressionLineDatasets = [];
+                    regressionSummary.replaceChildren();
 
                     const axisDescription = document.createElement('p');
                     axisDescription.className = 'file-regression-axis';
@@ -780,7 +825,7 @@
                         note.className = 'file-regression-note';
                         note.textContent = '回帰式を表示する列を選択してください．';
                         regressionSummary.appendChild(note);
-                        chartInstance.update('none');
+                        renderRegressionLines();
                         return;
                     }
 
@@ -789,7 +834,7 @@
                         note.className = 'file-regression-note';
                         note.textContent = 'ログにタスク区間がないため，回帰式を算出できません．';
                         regressionSummary.appendChild(note);
-                        chartInstance.update('none');
+                        renderRegressionLines();
                         return;
                     }
 
@@ -811,8 +856,18 @@
                             equation.className = fit.line
                                 ? 'file-regression-equation'
                                 : 'file-regression-note';
+                            const fitColor = [
+                                '#b45309',
+                                '#1e3a8a',
+                                '#6b21a8',
+                                '#1d4ed8',
+                                '#0f766e',
+                                '#9a3412',
+                                '#166534',
+                                '#5b21b6'
+                            ][datasetIndex % 8];
                             equation.style.borderLeftColor =
-                                sourceDataset.borderColor;
+                                fitColor;
 
                             if (!fit.line) {
                                 equation.textContent =
@@ -834,29 +889,36 @@
                             ].join('，');
                             section.appendChild(equation);
 
-                            chartInstance.data.datasets.push({
+                            regressionLineDatasets.push({
                                 label: hasLogRange
                                     ? `${sourceDataset.label} 回帰線（${segment.name}）`
                                     : `${sourceDataset.label} 回帰線`,
                                 data: fit.line,
-                                borderColor: sourceDataset.borderColor,
-                                backgroundColor: sourceDataset.borderColor,
-                                borderWidth: 2,
-                                borderDash: [6, 4],
+                                borderColor: fitColor,
+                                backgroundColor: fitColor,
+                                borderWidth: 3,
+                                borderDash: [],
                                 pointRadius: 0,
                                 pointHoverRadius: 0,
                                 pointHitRadius: 0,
                                 fill: false,
                                 spanGaps: true,
-                                isRegression: true
+                                isRegression: true,
+                                // Chart.js draws lower-order datasets later, so these remain in front.
+                                order: -10
                             });
                         });
 
                         regressionSummary.appendChild(section);
                     });
 
-                    chartInstance.update('none');
+                    renderRegressionLines();
                 };
+
+                regressionLineToggle?.addEventListener('click', () => {
+                    regressionLinesVisible = !regressionLinesVisible;
+                    renderRegressionLines();
+                });
 
                 rangeControls = global.VitBudsChartRangeControls?.attach({
                     chart: chartInstance,
@@ -888,11 +950,16 @@
                                             checkbox.dataset.datasetIndex
                                         );
 
-                                    chartInstance.data.datasets[index]
-                                        .hidden =
-                                        !checkbox.checked;
+                                    chartInstance.setDatasetVisibility(
+                                        index,
+                                        checkbox.checked
+                                    );
 
-                                    updateRegressionDisplay();
+                                    if (showRegression) {
+                                        updateRegressionDisplay();
+                                    } else {
+                                        chartInstance.update();
+                                    }
                                 }
                             );
 
@@ -900,10 +967,7 @@
                     );
                 }
 
-                regressionToggle.addEventListener(
-                    'change',
-                    updateRegressionDisplay
-                );
+                if (showRegression) updateRegressionDisplay();
             });
         });
     }
