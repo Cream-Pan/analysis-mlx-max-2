@@ -276,6 +276,57 @@ button:hover {
   margin: 0.5em 0 0;
 }
 
+.file-regression-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.file-regression-control input {
+  margin: 0;
+}
+
+.file-regression-summary {
+  margin: 0.5em 0 1em;
+  padding: 0.5em 0.75em;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.file-regression-axis {
+  margin: 0 0 0.5em;
+  color: #555;
+  font-size: 0.9em;
+}
+
+.file-regression-task {
+  margin: 0.5em 0 0.75em;
+}
+
+.file-regression-task h6 {
+  margin: 0.4em 0 0.25em;
+  color: #444;
+  font-size: 0.95em;
+}
+
+.file-regression-equation,
+.file-regression-note {
+  margin: 0.25em 0;
+  padding: 0.35em 0.55em;
+  border-left: 3px solid #999;
+  background: #f7f8fa;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-regression-note {
+  color: #92400e;
+  border-left-color: #d97706 !important;
+}
+
 
 .table-scroll {
   width: 100%;
