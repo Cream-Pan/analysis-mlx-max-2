@@ -37,6 +37,24 @@
       "log_policy": "optional",
       "log_columns_ref": "common_input_columns.log"
     },
+    "mlx_regression": {
+      "label": "MLX回帰分析",
+      "description": "MLX_で始まる CSV／Excel を 1～12 個使用します．先頭2列に数値があり，時間軸（RecvJST と SensorElapsed_ms，または sampling_time）が必要です．指定秒数ごと，またはログのタスクごとに回帰式を算出します．",
+      "fixed_files": [],
+      "file_rules": [
+        {
+          "label": "MLXファイル（ファイル名が MLX_ で始まるもの）",
+          "selection": "filename",
+          "starts_with": "MLX_",
+          "min_count": 1,
+          "max_count": 12,
+          "extensions": [".csv", ".xlsx", ".xls"],
+          "exclude_contains": ["_log.csv"]
+        }
+      ],
+      "log_policy": "optional",
+      "log_columns_ref": "common_input_columns.log"
+    },
     "max_evaluation": {
       "label": "MAX評価",
       "description": "ECG，PPG，Fin PPG の各 CSV を使用します．",

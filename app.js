@@ -16,6 +16,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const previewScaleWrapper = document.getElementById('preview-scale-wrapper');
     const previewRegressionInput = document.getElementById('previewRegression');
     const previewRegressionWrapper = document.getElementById('preview-regression-wrapper');
+    const mlxRegressionIntervalWrapper = document.getElementById('mlx-regression-interval-wrapper');
+    const mlxRegressionIntervalInput = document.getElementById('mlxRegressionIntervalSec');
+    const mlxRegressionTaskWrapper = document.getElementById('mlx-regression-task-wrapper');
+    const mlxRegressionByTaskInput = document.getElementById('mlxRegressionByTask');
     const submitButton = uploadForm.querySelector('button[type="submit"]');
     
 
@@ -135,6 +139,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const lower = normalizeFileName(name);
                 const extensions = (rule.extensions ?? []).map(value => value.toLowerCase());
                 if (extensions.length && !extensions.some(ext => lower.endsWith(ext))) return false;
+                if (rule.starts_with && !lower.startsWith(rule.starts_with.toLowerCase())) return false;
                 if (rule.suffix && !lower.endsWith(rule.suffix.toLowerCase())) return false;
                 if ((rule.contains_all ?? []).some(value => !lower.includes(value.toLowerCase()))) return false;
                 if (rule.contains_any?.length && !rule.contains_any.some(value => lower.includes(value.toLowerCase()))) return false;
@@ -218,7 +223,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 (rule.max_count != null ? `，最大 ${rule.max_count} 個` : '');
             lines.push(`${rule.label}：${countText}${columns.length ? `（列：${columns.join('，')}）` : ''}`);
         }
-        if (spec.log_policy === 'required') {
+        const mlxTaskMode = type === 'mlx_regression'
+            && Boolean(mlxRegressionByTaskInput?.checked);
+        if (spec.log_policy === 'required' || mlxTaskMode) {
             const columns = getConfigValue(spec.log_columns_ref) ?? [];
             lines.push(`ログファイル：必須（*_log.csv，${columns.join('，')} 列）`);
         } else if (spec.log_policy === 'optional') {
@@ -235,8 +242,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const spec = getInputSpec(type);
         const hideLogOption = spec?.log_policy === 'unused';
-
-        const requireLog = spec?.log_policy === 'required';
+        const requireLog = spec?.log_policy === 'required' || (
+            type === 'mlx_regression' && Boolean(mlxRegressionByTaskInput?.checked)
+        );
 
         if (hideLogOption && logCheckbox) {
             logCheckbox.checked = false;
@@ -271,6 +279,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (
             isPpgOnlyMode(type) ||
             type === 'show_files' ||
+            type === 'mlx_regression' ||
             (type === 'ppg_hr_analysis' && hasLog)
         ) {
             setVisible(intervalWrapper, false);
@@ -278,6 +287,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         setVisible(intervalWrapper, !logCheckbox.checked);
+    }
+
+    function updateMlxRegressionIntervalVisibility() {
+        const isMlxRegression = getSelectedAnalysisType() === 'mlx_regression';
+        const byTask = Boolean(mlxRegressionByTaskInput?.checked);
+        setVisible(
+            mlxRegressionIntervalWrapper,
+            isMlxRegression && !byTask
+        );
+        setVisible(
+            mlxRegressionTaskWrapper,
+            isMlxRegression
+        );
     }
 
     function updateAnalysisOffsetVisibility() {
@@ -319,6 +341,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     function syncUiState() {
         updateLogUiVisibility();
         updateIntervalInputVisibility();
+        updateMlxRegressionIntervalVisibility();
         updateAnalysisOffsetVisibility();
         updatePreviewColumnsVisibility();
         updateRequiredFiles();
@@ -344,6 +367,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     logCheckbox.addEventListener('change', syncUiState);
+    mlxRegressionByTaskInput?.addEventListener('change', syncUiState);
 
     // -----------------------------
     // 保存系
@@ -397,11 +421,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         return window.VitBudsResultFormatters.metrics.formatMaxMetric(value);
     }
 
-    function displayFilePreview(result, showRegression = false) {
+    function displayFilePreview(result, showRegression = false, options = {}) {
         window.VitBudsFilePreview.display(
             result,
             resultDiv,
-            showRegression
+            showRegression,
+            options
         );
     }
 
@@ -429,9 +454,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const selectedType = getSelectedAnalysisType();
         const hasLog = getEffectiveHasLog(selectedType);
+        const mlxRegressionByTask = selectedType === 'mlx_regression'
+            && Boolean(mlxRegressionByTaskInput?.checked);
         const showRegression = selectedType === 'show_files'
             && Boolean(previewRegressionInput?.checked);
         const formData = new FormData();
+        let mlxRegressionIntervalSec = mlxRegressionByTask
+            ? 0
+            : 10;
+
+        if (selectedType === 'mlx_regression' && !mlxRegressionByTask) {
+            mlxRegressionIntervalSec = Number(mlxRegressionIntervalInput?.value);
+            if (!Number.isFinite(mlxRegressionIntervalSec) || mlxRegressionIntervalSec < 0.1) {
+                alert('回帰区間には 0.1 秒以上の数値を入力してください．');
+                mlxRegressionIntervalInput?.focus();
+                return;
+            }
+        }
 
         let previewColumns = [];
 
@@ -486,7 +525,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         let intervalMin = 0;
-        if (!hasLog && !isPpgOnlyMode(selectedType) && selectedType !== 'show_files') {
+        if (
+            !hasLog &&
+            !isPpgOnlyMode(selectedType) &&
+            selectedType !== 'show_files' &&
+            selectedType !== 'mlx_regression'
+        ) {
             intervalMin = parseInt(intervalInput.value, 10);
             if (isNaN(intervalMin) || intervalMin <= 0) {
                 alert('区切り分数には 1 以上の整数を入力してください。');
@@ -499,6 +543,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         formData.append('analysis_duration_sec', analysisDurationSec);
         formData.append('has_log', hasLog);
         formData.append('interval_min', intervalMin);
+        formData.append('mlx_regression_interval_sec', mlxRegressionIntervalSec);
+        formData.append('mlx_regression_by_task', mlxRegressionByTask);
 
         if (selectedType === 'show_files') {
             formData.append(
@@ -548,6 +594,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 switch (result.analysis_type) {
                     case 'mlx_evaluation':
                         displayMlxEvaluation(result);
+                        break;
+                    case 'mlx_regression':
+                        displayFilePreview(result, true, {
+                            title: mlxRegressionByTask
+                                ? 'MLX回帰分析結果（タスクごと）'
+                                : `MLX回帰分析結果（${mlxRegressionIntervalSec}秒区間）`,
+                            showSlopeDirection: true
+                        });
                         break;
                     case 'max_evaluation':
                         displayMaxEvaluation(result);
