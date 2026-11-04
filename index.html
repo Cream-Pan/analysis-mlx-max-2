@@ -43,6 +43,10 @@
                         MLX評価
                     </label>
                     <label>
+                        <input type="radio" name="analysis_type" value="mlx_regression">
+                        MLX回帰分析
+                    </label>
+                    <label>
                         <input type="radio" name="analysis_type" value="ppg_acc_analysis">
                         PPG+ACC解析
                     </label>
@@ -83,6 +87,26 @@
                     style="width: 80px;"
                 >
                 <span>分ごとに区切る</span>
+            </div>
+            <div class="controls" id="mlx-regression-interval-wrapper" style="display: none;">
+                <label for="mlxRegressionIntervalSec" style="font-weight: bold;">
+                    回帰区間：
+                </label>
+                <input
+                    type="number"
+                    id="mlxRegressionIntervalSec"
+                    min="0.1"
+                    step="any"
+                    value="10"
+                    style="width: 110px;"
+                >
+                <span>秒ごとに区切る（小数入力可）</span>
+            </div>
+            <div class="controls" id="mlx-regression-task-wrapper" style="display: none;">
+                <label style="font-weight: bold;">
+                    <input type="checkbox" id="mlxRegressionByTask">
+                    回帰区間を指定せず，ログのタスクごとに算出する
+                </label>
             </div>
             <div class="controls" id="analysis-offset-wrapper" style="display: none;">
                 <label for="analysisStartOffsetSec" style="font-weight: bold;">

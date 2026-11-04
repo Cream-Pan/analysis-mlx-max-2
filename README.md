@@ -26,6 +26,8 @@ Excel / CSV 形式の計測データを読み込み，**MLX90632** と **MAX3010
 
 -   **MLX評価**\
     体温真値と MLX90632 の出力値を比較し，MAE・RMSE・平均値を算出する．
+-   **MLX回帰分析**\
+    MLXファイルの先頭2列を同じ温度軸に表示し，タスク内または記録全体を指定秒数で分けて回帰式を算出する．
 -   **MLX修正後評価**\
     補正後 MLX データを再評価する．
 -   **MAX評価**\
@@ -50,6 +52,7 @@ Excel / CSV 形式の計測データを読み込み，**MLX90632** と **MAX3010
 | --- | --- |
 | ファイル内容表示 | [ファイル内容表示の方法](docs/file-preview.md) |
 | MLX評価 | [MLX評価の方法](docs/mlx-evaluation.md) |
+| MLX回帰分析 | [MLX回帰分析の方法](docs/mlx-regression.md) |
 | MLX修正後評価 | [MLX修正後評価の方法](docs/mlx-reevaluation.md) |
 | MAX評価 | [MAX評価の方法](docs/max-evaluation.md) |
 | PPG→HR変換 | [PPG→HR変換の方法](docs/ppg-to-hr.md) |
@@ -65,6 +68,7 @@ Excel / CSV 形式の計測データを読み込み，**MLX90632** と **MAX3010
 
 -   ファイル内容表示
 -   MLX評価
+-   MLX回帰分析
 -   MAX評価
 -   MLX修正後評価
 -   PPG→HR解析
@@ -114,6 +118,13 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 - `body_temperature.csv`：2列以上
 - `3-Device_Measurement.xlsx` または `mlx` を含む CSV：8列以上
 - ログファイル：任意
+
+### MLX回帰分析
+
+- ファイル名が`MLX_`で始まるCSV／Excel：1～12個
+- 先頭2列を同一軸で表示し，秒単位で区切って各列の回帰式を算出
+- 「タスクごと」を選ぶと，ログのタスク区間ごとに回帰式を算出（ログ必須）
+- ログファイル：秒指定モードでは任意．使用時はStartからEndまでをタスクごとに分け，タスク内を指定秒数で再分割
 
 ### MLX修正後評価
 
@@ -237,6 +248,7 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 │   ├── time_utils.py
 │   ├── log_service.py
 │   ├── file_preview_service.py
+│   ├── mlx_regression_service.py
 │   ├── mlx_service.py
 │   ├── max_service.py
 │   ├── hr_compare_service.py
@@ -247,6 +259,7 @@ PPG＋ACC解析では窓詳細 CSV を出力できる．
 ├── docs/
 │   ├── file-preview.md
 │   ├── mlx-evaluation.md
+│   ├── mlx-regression.md
 │   ├── mlx-reevaluation.md
 │   ├── max-evaluation.md
 │   ├── ppg-to-hr.md

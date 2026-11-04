@@ -76,12 +76,17 @@
         }
     }
 
-    function displayFilePreview(result, resultDiv, showRegression = false) {
+    function displayFilePreview(
+        result,
+        resultDiv,
+        showRegression = false,
+        options = {}
+    ) {
         const resultEl = document.createElement('div');
         resultEl.className = 'result-item';
 
         const title = document.createElement('h3');
-        title.textContent = 'ファイル列グラフ';
+        title.textContent = options.title || 'ファイル列グラフ';
         resultEl.appendChild(title);
 
         resultDiv.appendChild(resultEl);
@@ -141,41 +146,33 @@
                         resultEl.appendChild(sheetTitle);
                     }
 
-                    // 表示列切替チェックボックス
-                    columnSelector = document.createElement('div');
-                    columnSelector.className = 'column-selector';
+                    if (options.showColumnSelector !== false) {
+                        // 表示列切替チェックボックス
+                        columnSelector = document.createElement('div');
+                        columnSelector.className = 'column-selector';
 
-                    const selectorTitle = document.createElement('b');
-                    selectorTitle.textContent = '表示列: ';
-                    columnSelector.appendChild(selectorTitle);
+                        const selectorTitle = document.createElement('b');
+                        selectorTitle.textContent = '表示列: ';
+                        columnSelector.appendChild(selectorTitle);
 
-                    sheet.series.forEach((series, index) => {
+                        sheet.series.forEach((series, index) => {
+                            const label = document.createElement('label');
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.checked = true;
+                            checkbox.dataset.datasetIndex = index;
 
-                        const label = document.createElement('label');
+                            const columnName =
+                                sheet.columns?.[series.column_number - 1]
+                                ?? `${series.column_number}列目`;
 
-                        const checkbox = document.createElement('input');
+                            label.appendChild(checkbox);
+                            label.appendChild(document.createTextNode(columnName));
+                            columnSelector.appendChild(label);
+                        });
 
-                        checkbox.type = 'checkbox';
-                        checkbox.checked = true;
-
-                        checkbox.dataset.datasetIndex = index;
-
-                        const columnName =
-                            sheet.columns?.[series.column_number - 1]
-                            ?? `${series.column_number}列目`;
-
-                        label.appendChild(checkbox);
-
-                        label.appendChild(
-                            document.createTextNode(
-                                columnName
-                            )
-                        );
-
-                        columnSelector.appendChild(label);
-                    });
-
-                    resultEl.appendChild(columnSelector);
+                        resultEl.appendChild(columnSelector);
+                    }
                 }
 
                 if (Array.isArray(sheet.errors)) {
@@ -616,6 +613,7 @@
                                 },
                                 legend: {
                                     onClick(event, legendItem, legend) {
+                                        if (options.lockDatasets) return;
                                         const datasetIndex =
                                             legendItem.datasetIndex;
                                         const visible = !legend.chart
@@ -654,6 +652,26 @@
                 const rawDatasetCount = datasets.length;
                 const regressionSegments = !showRegression
                     ? []
+                    : Array.isArray(sheet.regression_segments)
+                    ? sheet.regression_segments
+                        .map(segment => ({
+                            ...segment,
+                            start: isTimeAxis
+                                ? new Date(segment.start).getTime()
+                                : Number(segment.start),
+                            end: isTimeAxis
+                                ? new Date(segment.end).getTime()
+                                : Number(segment.end),
+                            origin: isTimeAxis
+                                ? new Date(segment.origin).getTime()
+                                : Number(segment.origin)
+                        }))
+                        .filter(segment => (
+                            Number.isFinite(segment.start)
+                            && Number.isFinite(segment.end)
+                            && Number.isFinite(segment.origin)
+                            && segment.end > segment.start
+                        ))
                     : hasLogRange
                     ? taskRows
                         .map(task => ({
@@ -675,9 +693,13 @@
                     }];
 
                 const regressionXAxisDescription = isTimeAxis
-                    ? hasLogRange
-                        ? 'x：各タスク開始からの経過時間（分）'
-                        : 'x：記録開始からの経過時間（分）'
+                    ? Array.isArray(sheet.regression_segments)
+                        ? sheet.regression_segment_mode === 'task'
+                            ? 'x：各タスク開始からの経過時間（分）'
+                            : 'x：各区間開始からの経過時間（分）'
+                        : hasLogRange
+                            ? 'x：各タスク開始からの経過時間（分）'
+                            : 'x：記録開始からの経過時間（分）'
                     : sheet.x_type === 'sampling'
                         ? 'x：sampling_time'
                         : 'x：行番号';
@@ -699,7 +721,9 @@
                         if (
                             !Number.isFinite(rawX)
                             || rawX < segment.start
-                            || rawX > segment.end
+                            || (segment.exclude_end
+                                ? rawX >= segment.end
+                                : rawX > segment.end)
                             || rawY === null
                             || rawY === undefined
                             || rawY === ''
@@ -829,10 +853,12 @@
                         return;
                     }
 
-                    if (hasLogRange && regressionSegments.length === 0) {
+                    if (regressionSegments.length === 0) {
                         const note = document.createElement('p');
                         note.className = 'file-regression-note';
-                        note.textContent = 'ログにタスク区間がないため，回帰式を算出できません．';
+                        note.textContent = hasLogRange
+                            ? 'ログとデータが重なるタスク区間がないため，回帰式を算出できません．'
+                            : '回帰対象となる時間区間がありません．';
                         regressionSummary.appendChild(note);
                         renderRegressionLines();
                         return;
@@ -882,11 +908,40 @@
                             const rSquaredText = fit.rSquared === null
                                 ? '—'
                                 : formatRegressionNumber(fit.rSquared);
-                            equation.textContent = [
+                            const equationText = [
                                 `${sourceDataset.label}：y = ${formatRegressionNumber(fit.slope)}x ${interceptText}`,
                                 `R² = ${rSquaredText}`,
                                 `n = ${fit.count}`
                             ].join('，');
+                            if (options.showSlopeDirection) {
+                                equation.appendChild(
+                                    document.createTextNode(`${equationText}　`)
+                                );
+                                const slopeDirection = document.createElement('span');
+                                slopeDirection.className = 'file-regression-direction';
+                                slopeDirection.textContent = fit.slope > 0
+                                    ? '＋'
+                                    : fit.slope < 0
+                                        ? '－'
+                                        : '0';
+                                slopeDirection.style.color = fit.slope > 0
+                                    ? '#c62828'
+                                    : fit.slope < 0
+                                        ? '#1565c0'
+                                        : '#666';
+                                slopeDirection.style.fontWeight = '700';
+                                slopeDirection.setAttribute(
+                                    'aria-label',
+                                    fit.slope > 0
+                                        ? '傾きは正'
+                                        : fit.slope < 0
+                                            ? '傾きは負'
+                                            : '傾きは0'
+                                );
+                                equation.appendChild(slopeDirection);
+                            } else {
+                                equation.textContent = equationText;
+                            }
                             section.appendChild(equation);
 
                             regressionLineDatasets.push({

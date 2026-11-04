@@ -105,6 +105,9 @@ def _required_columns(spec):
 
 def _filename_matches_rule(filename, rule):
     lower_name = filename.lower()
+    starts_with = rule.get("starts_with")
+    if starts_with and not lower_name.startswith(starts_with.lower()):
+        return False
     extensions = [value.lower() for value in rule.get("extensions", [])]
     if extensions and not any(lower_name.endswith(ext) for ext in extensions):
         return False

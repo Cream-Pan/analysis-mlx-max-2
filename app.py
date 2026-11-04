@@ -14,6 +14,7 @@ from services.common import (
 )
 from services.settings import config
 from services.file_preview_service import perform_file_preview
+from services.mlx_regression_service import perform_mlx_regression
 from services.mlx_service import process_mlx_common
 from services.max_service import perform_max_evaluation
 from services.ppg_service import process_ppg_to_hr, perform_ppg_hr_comparison
@@ -88,9 +89,31 @@ def upload_files():
             "message": "ログ使用の指定が不正です"
         }]), 400
     has_log = has_log_value == 'true'
+    mlx_regression_by_task_value = request.form.get(
+        'mlx_regression_by_task', 'false'
+    ).strip().lower()
+    if mlx_regression_by_task_value not in {'true', 'false'}:
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "MLX回帰分析の区間指定が不正です"
+        }]), 400
+    mlx_regression_by_task = mlx_regression_by_task_value == 'true'
+
+    if (
+        'mlx_regression' in analysis_types
+        and mlx_regression_by_task
+        and not has_log
+    ):
+        return jsonify([{
+            "analysis_type": "error", "status": "error",
+            "message": "タスクごとの回帰にはログファイルが必要です"
+        }]), 400
 
     try:
         interval_value = float(request.form.get('interval_min', 5))
+        mlx_regression_interval_sec = float(
+            request.form.get('mlx_regression_interval_sec', 10)
+        )
         analysis_start_offset_sec = float(
             request.form.get('analysis_start_offset_sec', 0)
         )
@@ -104,10 +127,20 @@ def upload_files():
             raise ValueError
         if not math.isfinite(analysis_duration_sec) or analysis_duration_sec < 0:
             raise ValueError
+        if 'mlx_regression' in analysis_types and not mlx_regression_by_task and (
+            not math.isfinite(mlx_regression_interval_sec)
+            or mlx_regression_interval_sec <= 0
+        ):
+            raise ValueError
     except (TypeError, ValueError, OverflowError):
+        message = (
+            "回帰区間には 0 より大きい秒数を指定してください"
+            if 'mlx_regression' in analysis_types
+            else "区切り分数，開始オフセット，解析時間は有効な数値で指定してください"
+        )
         return jsonify([{
             "analysis_type": "error", "status": "error",
-            "message": "区切り分数，開始オフセット，解析時間は有効な数値で指定してください"
+            "message": message
         }]), 400
 
     interval_modes = {'mlx_evaluation', 'mlx_reevaluation', 'max_evaluation',
@@ -182,6 +215,16 @@ def upload_files():
             result = process_mlx_common(uploaded_files, 'normal', has_log, interval_min)
             result["analysis_type"] = atype
             results.append(result)
+
+        elif atype == 'mlx_regression':
+            results.append(
+                perform_mlx_regression(
+                    uploaded_files,
+                    has_log,
+                    mlx_regression_interval_sec,
+                    mlx_regression_by_task
+                )
+            )
 
         elif atype == 'mlx_reevaluation':
             result = process_mlx_common(uploaded_files, 'corrected', has_log, interval_min)
